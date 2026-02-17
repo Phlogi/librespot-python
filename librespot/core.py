@@ -1239,23 +1239,56 @@ class Session(Closeable, MessageListener, SubListener):
         return self.__inner.preferred_locale
 
     def reconnect(self) -> None:
-        """Reconnect to the Spotify Server"""
+        """Reconnect to the Spotify Server.
+
+        Retries with exponential backoff when the access-point is
+        unreachable or drops the connection.
+        """
         if self.connection is not None:
             self.connection.close()
             self.__receiver.stop()
-        self.connection = Session.ConnectionHolder.create(
-            ApResolver.get_random_accesspoint(), self.__inner.conf)
-        self.connect()
-        self.__authenticate_partial(
-            Authentication.LoginCredentials(
-                typ=self.__ap_welcome.reusable_auth_credentials_type,
-                username=self.__ap_welcome.canonical_username,
-                auth_data=self.__ap_welcome.reusable_auth_credentials,
-            ),
-            True,
+
+        max_attempts = 5
+        last_exception: typing.Optional[Exception] = None
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                self.connection = Session.ConnectionHolder.create(
+                    ApResolver.get_random_accesspoint(), self.__inner.conf)
+                self.connect()
+                self.__authenticate_partial(
+                    Authentication.LoginCredentials(
+                        typ=self.__ap_welcome.reusable_auth_credentials_type,
+                        username=self.__ap_welcome.canonical_username,
+                        auth_data=self.__ap_welcome.reusable_auth_credentials,
+                    ),
+                    True,
+                )
+                self.logger.info("Re-authenticated as {}!".format(
+                    self.__ap_welcome.canonical_username))
+                return
+            except Exception as ex:
+                last_exception = ex
+                if self.connection is not None:
+                    try:
+                        self.connection.close()
+                    except Exception:
+                        pass
+                    self.connection = None
+                if attempt < max_attempts:
+                    delay = min(2 ** attempt, 30)
+                    self.logger.warning(
+                        "Reconnection attempt %d/%d failed: %s. "
+                        "Retrying in %ds...",
+                        attempt, max_attempts, ex, delay,
+                    )
+                    time.sleep(delay)
+
+        self.logger.fatal(
+            "Failed to reconnect after %d attempts: %s",
+            max_attempts, last_exception,
         )
-        self.logger.info("Re-authenticated as {}!".format(
-            self.__ap_welcome.canonical_username))
+        raise last_exception
 
     def reconnecting(self) -> bool:
         """ """
@@ -1658,27 +1691,57 @@ class Session(Closeable, MessageListener, SubListener):
             return self
 
         def create(self) -> Session:
-            """Create the Session instance
+            """Create the Session instance.
 
+            Retries connection attempts with exponential backoff when
+            the access-point is unreachable or drops the connection.
+            Authentication failures (bad credentials) are never retried.
 
             :returns: Session instance
 
             """
             if self.login_credentials is None:
                 raise RuntimeError("You must select an authentication method.")
-            session = Session(
-                Session.Inner(
-                    self.device_type,
-                    self.device_name,
-                    self.preferred_locale,
-                    self.conf,
-                    self.device_id,
-                ),
-                ApResolver.get_random_accesspoint(),
-            )
-            session.connect()
-            session.authenticate(self.login_credentials)
-            return session
+
+            max_attempts = 5
+            last_exception: typing.Optional[Exception] = None
+            logger = logging.getLogger("Librespot:Session")
+
+            for attempt in range(1, max_attempts + 1):
+                session: typing.Optional[Session] = None
+                try:
+                    session = Session(
+                        Session.Inner(
+                            self.device_type,
+                            self.device_name,
+                            self.preferred_locale,
+                            self.conf,
+                            self.device_id,
+                        ),
+                        ApResolver.get_random_accesspoint(),
+                    )
+                    session.connect()
+                    session.authenticate(self.login_credentials)
+                    return session
+                except Session.SpotifyAuthenticationException:
+                    raise
+                except Exception as ex:
+                    last_exception = ex
+                    if session is not None:
+                        try:
+                            session.close()
+                        except Exception:
+                            pass
+                    if attempt < max_attempts:
+                        delay = min(2 ** attempt, 30)
+                        logger.warning(
+                            "Connection attempt %d/%d failed: %s. "
+                            "Retrying in %ds...",
+                            attempt, max_attempts, ex, delay,
+                        )
+                        time.sleep(delay)
+
+            raise last_exception
 
     class Configuration:
         """ """
@@ -1924,13 +1987,28 @@ class Session(Closeable, MessageListener, SubListener):
                 pass
 
         def read(self, length: int) -> bytes:
-            """Read data from socket
+            """Read exactly *length* bytes from the socket.
 
-            :param length: int:
-            :returns: Bytes data from socket
+            Loops over recv calls until the full amount has been
+            collected.  Raises ConnectionError if the remote end
+            closes the connection before all bytes arrive.
+
+            :param length: Number of bytes to read.
+            :returns: Exactly *length* bytes.
 
             """
-            return self.__socket.recv(length)
+            pieces: list[bytes] = []
+            remaining = length
+            while remaining > 0:
+                chunk = self.__socket.recv(remaining)
+                if not chunk:
+                    received = length - remaining
+                    raise ConnectionError(
+                        "Connection closed: expected {} bytes, "
+                        "got {}".format(length, received))
+                pieces.append(chunk)
+                remaining -= len(chunk)
+            return b"".join(pieces)
 
         def read_int(self) -> int:
             """Read integer from socket
@@ -2042,7 +2120,7 @@ class Session(Closeable, MessageListener, SubListener):
                             format(util.bytes_to_hex(packet.cmd),
                                    packet.payload))
                         continue
-                except (RuntimeError, ConnectionResetError) as ex:
+                except (RuntimeError, ConnectionError) as ex:
                     if self.__running:
                         self.__session.logger.fatal(
                             "Failed reading packet! {}".format(ex))
