@@ -1248,7 +1248,7 @@ class Session(Closeable, MessageListener, SubListener):
             self.connection.close()
             self.__receiver.stop()
 
-        max_attempts = 5
+        max_attempts = int(os.getenv("LIBRESPOT_RETRY_ATTEMPTS", "5"))
         last_exception: typing.Optional[Exception] = None
 
         for attempt in range(1, max_attempts + 1):
@@ -1703,7 +1703,7 @@ class Session(Closeable, MessageListener, SubListener):
             if self.login_credentials is None:
                 raise RuntimeError("You must select an authentication method.")
 
-            max_attempts = 5
+            max_attempts = int(os.getenv("LIBRESPOT_RETRY_ATTEMPTS", "5"))
             last_exception: typing.Optional[Exception] = None
             logger = logging.getLogger("Librespot:Session")
 
