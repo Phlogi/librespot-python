@@ -269,9 +269,9 @@ class AudioKeyManager(PacketsReceiver, Closeable):
         out.write(struct.pack(">i", seq))
         out.write(self.__zero_short)
         out.seek(0)
-        self.__session.send(Packet.Type.request_key, out.read())
         callback = AudioKeyManager.SyncCallback(self)
         self.__callbacks[seq] = callback
+        self.__session.send(Packet.Type.request_key, out.read())
         key = callback.wait_response()
         if key is None:
             if retry:
@@ -291,11 +291,11 @@ class AudioKeyManager(PacketsReceiver, Closeable):
 
     class SyncCallback(Callback):
         __audio_key_manager: AudioKeyManager
-        __reference = queue.Queue()
-        __reference_lock = threading.Condition()
 
         def __init__(self, audio_key_manager: AudioKeyManager):
             self.__audio_key_manager = audio_key_manager
+            self.__reference = queue.Queue()
+            self.__reference_lock = threading.Condition()
 
         def key(self, key: bytes) -> None:
             with self.__reference_lock:
@@ -313,7 +313,10 @@ class AudioKeyManager(PacketsReceiver, Closeable):
             with self.__reference_lock:
                 self.__reference_lock.wait(
                     AudioKeyManager.audio_key_request_timeout)
-                return self.__reference.get(block=False)
+                try:
+                    return self.__reference.get(block=False)
+                except queue.Empty:
+                    return None
 
 
 class CdnFeedHelper:
