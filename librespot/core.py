@@ -2426,6 +2426,7 @@ class TokenProvider:
     def __init__(self, session: Session):
         self.__session = session
         self.__tokens = []
+        self.__tokens_lock = threading.Lock()
 
     def find_token_with_all_scopes(
             self, scopes: typing.List[str]) -> typing.Union[StoredToken, None]:
@@ -2460,17 +2461,19 @@ class TokenProvider:
         if len(scopes) == 0:
             raise RuntimeError("The token doesn't have any scope")
 
-        token = self.find_token_with_all_scopes(scopes)
-        if token is not None:
-            if token.expired():
-                self.__tokens.remove(token)
-                self.logger.debug("Login5 token expired, need to re-authenticate")
-            else:
-                return token
+        with self.__tokens_lock:
+            token = self.find_token_with_all_scopes(scopes)
+            if token is not None:
+                if token.expired():
+                    self.__tokens.remove(token)
+                    self.logger.debug("Login5 token expired, need to re-authenticate")
+                else:
+                    return token
 
         token = self.login5(scopes)
         if token is not None:
-            self.__tokens.append(token)
+            with self.__tokens_lock:
+                self.__tokens.append(token)
             self.logger.debug("Using Login5 access token for scopes: {}".format(scopes))
         return token
 
