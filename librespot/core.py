@@ -2191,12 +2191,13 @@ class Session(Closeable, MessageListener, SubListener):
                 packet: Packet
                 cmd: typing.Optional[bytes]
                 try:
-                    if self.__session.cipher_pair is None:
+                    cp = self.__session.cipher_pair
+                    conn = self.__session.connection
+                    if cp is None:
                         raise ConnectionError("cipher_pair is None")
-                    if self.__session.connection is None:
+                    if conn is None:
                         raise ConnectionError("connection is None")
-                    packet = self.__session.cipher_pair.receive_encoded(
-                        self.__session.connection)
+                    packet = cp.receive_encoded(conn)
                     cmd = Packet.Type.parse(packet.cmd)
                     if cmd is None:
                         self.__session.logger.info(
