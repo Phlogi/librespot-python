@@ -67,7 +67,7 @@ zeroconf = ZeroconfServer.Builder().create()
 #### Without auth url callback
 
 ```python
-from librespot.core import Session
+from librespot.session import Session
 
 # This will log an url in the terminal that you have to open
 
@@ -79,7 +79,7 @@ session = Session.Builder() \
 #### With auth url callback and changing the content of the success page
 
 ```python
-from librespot.core import Session
+from librespot.session import Session
 import webbrowser
 
 # This will pass the auth url to the method
@@ -98,7 +98,7 @@ session = Session.Builder() \
 ### Use Stored Credentials for Login
 
 ```python
-from librespot.core import Session
+from librespot.session import Session
 
 # Supports both Python and Rust librespot credential formats
 
@@ -110,7 +110,7 @@ session = Session.Builder() \
 ### Get Spotify's OAuth token
 
 ```python
-from librespot.core import Session
+from librespot.session import Session
 
 
 session = Session.Builder() \
@@ -125,7 +125,7 @@ access_token = session.tokens().get("playlist-read")
 *Currently, music streaming is supported, but it may cause unintended behavior.<br>
 
 ```python
-from librespot.core import Session
+from librespot.session import Session
 from librespot.metadata import TrackId
 from librespot.audio.decoders import AudioQuality, VorbisOnlyAudioQuality
 

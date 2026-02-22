@@ -48,7 +48,7 @@ pip install git+https://github.com/kokarare1212/librespot-python
 ### Get Spotify's OAuth token
 
 ```python
-from librespot.core import Session
+from librespot.session import Session
 
 
 session = Session.Builder() \
@@ -63,7 +63,7 @@ aceess_token = session.tokens().get("playlist-read")
 *Currently, music streaming is supported, but it may cause unintended behavior.<br>
 
 ```python
-from librespot.core import Session
+from librespot.session import Session
 from librespot.metadata import TrackId
 from librespot.audio.decoders import AudioQuality, VorbisOnlyAudioQuality
 
