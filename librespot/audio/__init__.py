@@ -146,7 +146,7 @@ class AbsChunkedInputStream(io.BytesIO, HaltListener):
                     self.stream_read_halted(chunk, int(time.time() * 1000))
                 self.chunk_exception = None
                 self.wait_for_chunk = chunk
-                self.wait_lock.wait_for(lambda: self.available_chunks()[chunk])
+                self.wait_lock.wait_for(lambda: self.available_chunks()[chunk] or self._closed)
                 if self._closed:
                     return
                 if self.chunk_exception is not None:
@@ -185,11 +185,9 @@ class AbsChunkedInputStream(io.BytesIO, HaltListener):
         buffer = io.BytesIO()
         chunk = int(self.__pos / (128 * 1024))
         chunk_off = int(self.__pos % (128 * 1024))
-        chunk_end = int(__size / (128 * 1024))
-        chunk_end_off = int(__size % (128 * 1024))
-        if chunk_end > self.size():
-            chunk_end = int(self.size() / (128 * 1024))
-            chunk_end_off = int(self.size() % (128 * 1024))
+        end_pos = min(self.__pos + __size, self.size())
+        chunk_end = int(end_pos / (128 * 1024))
+        chunk_end_off = int(end_pos % (128 * 1024))
         self.check_availability(chunk, True, False)
         if chunk_off + __size > len(self.buffer()[chunk]):
             buffer.write(self.buffer()[chunk][chunk_off:])
@@ -642,8 +640,14 @@ class CdnManager:
             return self.__audio_decrypt.decrypt_time_ms()
 
         def request_chunk(self, index: int) -> None:
-            response = self.request(index)
-            self.write_chunk(response.buffer, index, False)
+            try:
+                response = self.request(index)
+                self.write_chunk(response.buffer, index, False)
+            except Exception as ex:
+                self.logger.warning(
+                    "Failed to request chunk {}: {}".format(index, ex))
+                self.__internal_stream.notify_chunk_error(
+                    index, AbsChunkedInputStream.ChunkException)
 
         def request(self, chunk: typing.Optional[int] = None,
                     range_start: typing.Optional[int] = None,
@@ -681,7 +685,7 @@ class CdnManager:
 
             def close(self) -> None:
                 super().close()
-                del self.streamer.buffer
+                self.streamer.buffer = None
 
             def requested_chunks(self) -> typing.List[bool]:
                 return self.streamer.requested
