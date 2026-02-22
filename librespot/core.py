@@ -709,7 +709,7 @@ class DealerClient(Closeable):
 
             """
             if self.__closed:
-                self.__dealer_client.logger.fatal(
+                self.__dealer_client.logger.critical(
                     "I wonder what happened here... Terminating. [closed: {}]".
                     format(self.__closed))
             self.__dealer_client.logger.debug(
@@ -1350,7 +1350,7 @@ class Session(Closeable, MessageListener, SubListener):
                         )
                         time.sleep(delay)
 
-            self.logger.fatal(
+            self.logger.critical(
                 "Failed to reconnect after %d attempts: %s",
                 max_attempts, last_exception,
             )
@@ -2205,7 +2205,7 @@ class Session(Closeable, MessageListener, SubListener):
                         continue
                 except (RuntimeError, ConnectionError) as ex:
                     if self.__running:
-                        self.__session.logger.fatal(
+                        self.__session.logger.critical(
                             "Failed reading packet! {}".format(ex))
                         self.__session.reconnect()
                     break
