@@ -76,7 +76,7 @@ class MercuryClient(Closeable, PacketsReceiver):
         flags = payload.read(1)
         parts = struct.unpack(">H", payload.read(2))[0]
         partial = self.__partials.get(seq)
-        if partial is None or flags == 0:
+        if partial is None or flags == b"\x00":
             partial = []
             self.__partials[seq] = partial
         self.logger.debug(
