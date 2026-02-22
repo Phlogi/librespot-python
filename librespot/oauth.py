@@ -1,7 +1,7 @@
 import base64
 import logging
 import random
-import urllib
+import urllib.parse
 from hashlib import sha256
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
@@ -88,16 +88,22 @@ class OAuth:
             super().__init__(server_address, RequestHandlerClass)
 
     class CallbackRequestHandler(BaseHTTPRequestHandler):
+        server: OAuth.CallbackServer  # type: ignore[assignment]
+
         def do_GET(self):
-            if(self.path.startswith(self.server.callback_path)):
+            callback_path = self.server.callback_path
+            if callback_path is not None and self.path.startswith(callback_path):
                 query = urllib.parse.parse_qs(urlparse(self.path).query)
-                if not query.__contains__("code"):
+                if "code" not in query:
                     self.send_response(400)
                     self.send_header('Content-type', 'text/html')
                     self.end_headers()
                     self.wfile.write(b"Request doesn't contain 'code'")
                     return
-                self.server.set_code(query.get("code")[0])
+                code_list = query.get("code")
+                if code_list is None:
+                    return
+                self.server.set_code(code_list[0])
                 self.send_response(200)
                 self.send_header('Content-type', 'text/html')
                 self.end_headers()
@@ -110,6 +116,8 @@ class OAuth:
             return
 
     def __start_server(self):
+        if self.__server is None:
+            return
         try:
             self.__server.handle_request()
         except KeyboardInterrupt:
@@ -126,7 +134,7 @@ class OAuth:
             self.set_code,
             self.__success_page_content,
         )
-        logging.info("OAuth: Waiting for callback on %s", url.hostname + ":" + str(url.port))
+        logging.info("OAuth: Waiting for callback on %s:%s", url.hostname, url.port)
         self.__start_server()
 
     def flow(self):

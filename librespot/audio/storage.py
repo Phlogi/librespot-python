@@ -22,7 +22,7 @@ class ChannelManager(Closeable, PacketsReceiver):
     logger = logging.getLogger("Librespot:ChannelManager")
     seq_holder = 0
     seq_holder_lock = threading.Condition()
-    __session: Session = None
+    __session: Session
 
     def __init__(self, session: Session):
         self.__session = session
@@ -94,7 +94,7 @@ class ChannelManager(Closeable, PacketsReceiver):
             self.channel_manager.executor_service.submit(
                 lambda: ChannelManager.Channel.Handler(self))
 
-        def _handle(self, payload: bytes) -> bool:
+        def _handle(self, payload: typing.Any) -> bool:
             if len(payload) == 0:
                 if not self.__header:
                     self.__file.write_chunk(payload, self.__chunk_index, False)
@@ -124,7 +124,7 @@ class ChannelManager(Closeable, PacketsReceiver):
             self.__file.stream_error(self.__chunk_index, code)
 
         class Handler:
-            __channel: ChannelManager.Channel = None
+            __channel: ChannelManager.Channel
 
             def __init__(self, channel: ChannelManager.Channel):
                 self.__channel = channel

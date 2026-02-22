@@ -11,8 +11,10 @@ from librespot.audio.decoders import AudioQuality, VorbisOnlyAudioQuality
 from librespot.core import Session
 from librespot.metadata import TrackId
 
+import typing
+
 quality: AudioQuality = AudioQuality.VERY_HIGH
-session: Session = None
+session: typing.Optional[Session] = None
 
 
 def clear():
@@ -24,6 +26,7 @@ def clear():
 
 def client():
     global quality, session
+    assert session is not None
     while True:
         clear()
         splash()
@@ -38,10 +41,9 @@ def client():
                 r"^(https?://)?open\.spotify\.com/track/(?P<TrackID>[0-9a-zA-Z]{22})(\?si=.+?)?$",
                 args[1],
             )
-            if track_uri_search is not None or track_url_search is not None:
-                track_id_str = (track_uri_search
-                                if track_uri_search is not None else
-                                track_url_search).group("TrackID")
+            match = track_uri_search or track_url_search
+            if match is not None:
+                track_id_str = match.group("TrackID")
                 play(track_id_str)
                 wait()
         if args[0] == "q" or args[0] == "quality":
@@ -114,6 +116,7 @@ def login():
 
 
 def play(track_id_str: str):
+    assert session is not None
     track_id = TrackId.from_base62(track_id_str)
     stream = session.content_feeder().load(track_id,
                                            VorbisOnlyAudioQuality(quality),
@@ -124,6 +127,8 @@ def play(track_id_str: str):
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    if stream is None or stream.input_stream is None or ffplay.stdin is None:
+        return
     while True:
         byte = stream.input_stream.stream().read(1)
         if byte == -1:

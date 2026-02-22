@@ -2,14 +2,15 @@ import os
 import re
 import socket
 import threading
+import typing
 from requests.structures import CaseInsensitiveDict
 
 from librespot.audio.decoders import AudioQuality, VorbisOnlyAudioQuality
 from librespot.core import Session
 from librespot.metadata import TrackId
 
-session: Session
-sock: socket
+session: typing.Optional[Session] = None
+sock: typing.Optional[socket.socket] = None
 
 
 def handler(client: socket.socket, address: str):
@@ -55,7 +56,6 @@ class HttpCode:
 
 def main():
     global session, sock
-    session = None
     if os.path.isfile("credentials.json"):
         try:
             session = Session.Builder().stored_file().create()
@@ -79,17 +79,21 @@ def response(client: socket.socket, uri: str, header: CaseInsensitiveDict,
     if re.search(r"^/audio/track/([0-9a-zA-Z]{22})$", uri) is not None:
         track_id_search = re.search(
             r"^/audio/track/(?P<TrackID>[0-9a-zA-Z]{22})$", uri)
+        assert track_id_search is not None
         track_id_str = track_id_search.group("TrackID")
         track_id = TrackId.from_base62(track_id_str)
+        assert session is not None
         stream = session.content_feeder().load(
             track_id, VorbisOnlyAudioQuality(AudioQuality.VERY_HIGH), False,
             None)
+        assert stream is not None and stream.input_stream is not None
         start = 0
         end = stream.input_stream.stream().size()
-        if header.get("range") is not None:
+        range_header = header.get("range")
+        if range_header is not None:
             range_search = re.search(
                 "^bytes=(?P<start>[0-9]+?)-(?P<end>[0-9]+?)$",
-                header.get("range"))
+                range_header)
             if range_search is not None:
                 start = int(range_search.group("start"))
                 end = (int(range_search.group("end"))

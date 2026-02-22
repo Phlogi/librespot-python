@@ -72,7 +72,7 @@ class ApiClient(Closeable):
     """ """
     logger = logging.getLogger("Librespot:ApiClient")
     __base_url: str
-    __client_token_str: str = None
+    __client_token_str: typing.Optional[str] = None
     __session: Session
 
     def __init__(self, session: Session):
@@ -83,7 +83,7 @@ class ApiClient(Closeable):
         self,
         method: str,
         suffix: str,
-        headers: typing.Union[None, CaseInsensitiveDict[str, str]],
+        headers: typing.Union[None, CaseInsensitiveDict[str]],
         body: typing.Union[None, bytes],
         url: typing.Union[None, str],
     ) -> requests.PreparedRequest:
@@ -115,7 +115,8 @@ class ApiClient(Closeable):
             headers = CaseInsensitiveDict()
         headers["Authorization"] = "Bearer {}".format(
             self.__session.tokens().get("playlist-read"))
-        headers["client-token"] = self.__client_token_str
+        if self.__client_token_str is not None:
+            headers["client-token"] = self.__client_token_str
 
         request = requests.Request(method, url, headers=headers, data=body)
 
@@ -125,7 +126,7 @@ class ApiClient(Closeable):
         self,
         method: str,
         suffix: str,
-        headers: typing.Union[None, CaseInsensitiveDict[str, str]],
+        headers: typing.Union[None, CaseInsensitiveDict[str]],
         body: typing.Union[None, bytes],
     ) -> requests.Response:
         """
@@ -148,7 +149,7 @@ class ApiClient(Closeable):
         method: str,
         url: str,
         suffix: str,
-        headers: typing.Union[None, CaseInsensitiveDict[str, str]],
+        headers: typing.Union[None, CaseInsensitiveDict[str]],
         body: typing.Union[None, bytes],
     ) -> requests.Response:
         """
@@ -178,10 +179,10 @@ class ApiClient(Closeable):
         response = self.send(
             "PUT",
             "/connect-state/v1/devices/{}".format(self.__session.device_id()),
-            {
+            CaseInsensitiveDict({
                 "Content-Type": "application/protobuf",
                 "X-Spotify-Connection-Id": connection_id,
-            },
+            }),
             proto.SerializeToString(),
         )
         if response.status_code == 413:
@@ -515,6 +516,8 @@ class DealerClient(Closeable):
             for listener in self.__message_listeners:
                 dispatched = False
                 keys = self.__message_listeners.get(listener)
+                if keys is None:
+                    continue
                 for key in keys:
                     if uri.startswith(key) and not dispatched:
                         interesting = True
@@ -552,11 +555,15 @@ class DealerClient(Closeable):
             for mid_prefix in self.__request_listeners:
                 if mid.startswith(mid_prefix):
                     listener = self.__request_listeners.get(mid_prefix)
+                    if listener is None:
+                        continue
                     interesting = True
+
+                    _listener = listener  # bind for closure
 
                     def anonymous():
                         """ """
-                        result = listener.on_request(mid, pid, sender, command)
+                        result = _listener.on_request(mid, pid, sender, command)
                         if self.__connection is not None:
                             self.__connection.send_reply(key, result)
                         self.logger.warning(
@@ -596,7 +603,7 @@ class DealerClient(Closeable):
                 return
             self.__message_listeners_lock.wait()
 
-    def __get_headers(self, obj: typing.Any) -> CaseInsensitiveDict[str, str]:
+    def __get_headers(self, obj: typing.Any) -> CaseInsensitiveDict[str]:
         headers = obj.get("headers")
         if headers is None:
             return CaseInsensitiveDict()
@@ -746,7 +753,7 @@ class EventService(Closeable):
                     "hm://event-service/v1/events").set_method("POST").
                 add_user_field("Accept-Language", "en").add_user_field(
                     "X-ClientTimeStamp",
-                    int(time.time() * 1000)).add_payload_part(body).build())
+                    str(int(time.time() * 1000))).add_payload_part(body).build())
             self.logger.debug("Event sent. body: {}, result: {}".format(
                 body, resp.status_code))
         except IOError as ex:
@@ -793,9 +800,9 @@ class EventService(Closeable):
         CDN_REQUEST = ("10", 20)
 
         eventId: str
-        unknown: str
+        unknown: int
 
-        def __init__(self, event_id: str, unknown: str):
+        def __init__(self, event_id: str, unknown: int):
             self.eventId = event_id
             self.unknown = unknown
 
@@ -815,7 +822,7 @@ class EventService(Closeable):
             self.append_no_delimiter(event_type.value[0])
             self.append(event_type.value[1])
 
-        def append_no_delimiter(self, s: str = None) -> None:
+        def append_no_delimiter(self, s: typing.Optional[str] = None) -> None:
             """
 
             :param s: str:  (Default value = None)
@@ -826,8 +833,8 @@ class EventService(Closeable):
             self.body.write(s.encode())
 
         def append(self,
-                   c: int = None,
-                   s: str = None) -> EventService.EventBuilder:
+                   c: typing.Optional[int] = None,
+                   s: typing.Optional[str] = None) -> EventService.EventBuilder:
             """
 
             :param c: int:  (Default value = None)
@@ -840,10 +847,10 @@ class EventService(Closeable):
                 self.body.write(b"\x09")
                 self.body.write(bytes([c]))
                 return self
-            if s is not None:
-                self.body.write(b"\x09")
-                self.append_no_delimiter(s)
-                return self
+            assert s is not None
+            self.body.write(b"\x09")
+            self.append_no_delimiter(s)
+            return self
 
         def to_array(self) -> bytes:
             """ """
@@ -925,6 +932,7 @@ class Session(Closeable, MessageListener, SubListener):
     __user_attributes = {}
 
     def __init__(self, inner: Inner, address: str) -> None:
+        assert inner.conf is not None, "Configuration not set"
         self.__client = Session.create_client(inner.conf)
         self.connection = Session.ConnectionHolder.create(address, None)
         self.__inner = inner
@@ -1006,6 +1014,8 @@ class Session(Closeable, MessageListener, SubListener):
 
     def client(self) -> requests.Session:
         """ """
+        if self.__client is None:
+            raise RuntimeError("Session client is not initialized!")
         return self.__client
 
     def close(self) -> None:
@@ -1042,6 +1052,7 @@ class Session(Closeable, MessageListener, SubListener):
 
     def connect(self) -> None:
         """Connect to the Spotify Server"""
+        assert self.connection is not None, "Connection not established"
         acc = Session.Accumulator()
         # Send ClientHello
         nonce = Random.get_random_bytes(0x10)
@@ -1180,7 +1191,7 @@ class Session(Closeable, MessageListener, SubListener):
                 self.logger.info("Updated user attribute: {} -> {}".format(
                     pair.key, pair.value))
 
-    def get_user_attribute(self, key: str, fallback: str = None) -> str:
+    def get_user_attribute(self, key: str, fallback: typing.Optional[str] = None) -> typing.Optional[str]:
         """
 
         :param key: str:
@@ -1204,7 +1215,7 @@ class Session(Closeable, MessageListener, SubListener):
             raise RuntimeError("Session isn't authenticated!")
         return self.__mercury_client
 
-    def on_message(self, uri: str, headers: CaseInsensitiveDict[str, str],
+    def on_message(self, uri: str, headers: CaseInsensitiveDict[str],
                    payload: bytes):
         """
 
@@ -1246,7 +1257,8 @@ class Session(Closeable, MessageListener, SubListener):
         """
         if self.connection is not None:
             self.connection.close()
-            self.__receiver.stop()
+            if self.__receiver is not None:
+                self.__receiver.stop()
 
         max_attempts = int(os.getenv("LIBRESPOT_RETRY_ATTEMPTS", "5"))
         last_exception: typing.Optional[Exception] = None
@@ -1288,7 +1300,9 @@ class Session(Closeable, MessageListener, SubListener):
             "Failed to reconnect after %d attempts: %s",
             max_attempts, last_exception,
         )
-        raise last_exception
+        if last_exception is not None:
+            raise last_exception
+        raise RuntimeError("Failed to reconnect")
 
     def reconnecting(self) -> bool:
         """ """
@@ -1343,6 +1357,8 @@ class Session(Closeable, MessageListener, SubListener):
         Args:
             credential: Spotify account login information
         """
+        assert self.__inner.conf is not None, "Configuration not set"
+        assert self.connection is not None, "Connection not established"
         if self.cipher_pair is None:
             raise RuntimeError("Connection not established!")
         client_response_encrypted_proto = Authentication.ClientResponseEncrypted(
@@ -1410,6 +1426,8 @@ class Session(Closeable, MessageListener, SubListener):
             raise RuntimeError("Unknown CMD 0x" + packet.cmd.hex())
 
     def __send_unchecked(self, cmd: bytes, payload: bytes) -> None:
+        assert self.cipher_pair is not None, "Cipher pair not initialized"
+        assert self.connection is not None, "Connection not established"
         self.cipher_pair.send_encoded(self.connection, cmd, payload)
 
     def __wait_auth_lock(self) -> None:
@@ -1424,13 +1442,13 @@ class Session(Closeable, MessageListener, SubListener):
 
     class AbsBuilder:
         """ """
-        conf = None
-        device_id = None
-        device_name = "librespot-python"
+        conf: typing.Optional[Session.Configuration] = None
+        device_id: typing.Optional[str] = None
+        device_name: str = "librespot-python"
         device_type = Connect.DeviceType.COMPUTER
-        preferred_locale = "en"
+        preferred_locale: str = "en"
 
-        def __init__(self, conf: Session.Configuration = None):
+        def __init__(self, conf: typing.Optional[Session.Configuration] = None):
             if conf is None:
                 self.conf = Session.Configuration.Builder().build()
             else:
@@ -1526,7 +1544,7 @@ class Session(Closeable, MessageListener, SubListener):
 
     class Builder(AbsBuilder):
         """ """
-        login_credentials: Authentication.LoginCredentials = None
+        login_credentials: typing.Optional[Authentication.LoginCredentials] = None
 
         def blob(self, username: str, blob: bytes) -> Session.Builder:
             """
@@ -1626,7 +1644,7 @@ class Session(Closeable, MessageListener, SubListener):
             return self
 
         def stored_file(self,
-                        stored_credentials: str = None) -> Session.Builder:
+                        stored_credentials: typing.Optional[str] = None) -> Session.Builder:
             """Create credential from stored file
 
             :param stored_credentials: str:  (Default value = None)
@@ -1634,8 +1652,9 @@ class Session(Closeable, MessageListener, SubListener):
 
             """
             if stored_credentials is None:
-                stored_credentials = self.conf.stored_credentials_file
-            if os.path.isfile(stored_credentials):
+                if self.conf is not None:
+                    stored_credentials = self.conf.stored_credentials_file
+            if stored_credentials is not None and os.path.isfile(stored_credentials):
                 try:
                     with open(stored_credentials) as f:
                         obj = json.load(f)
@@ -1669,7 +1688,7 @@ class Session(Closeable, MessageListener, SubListener):
             You can supply an oauth_url_callback method that takes a string and returns the OAuth URL.
             When oauth_url_callback is None, this will only log the auth url to the console.
             """
-            if os.path.isfile(self.conf.stored_credentials_file):
+            if self.conf is not None and self.conf.stored_credentials_file is not None and os.path.isfile(self.conf.stored_credentials_file):
                 return self.stored_file(None)
             self.login_credentials = OAuth(MercuryRequests.keymaster_client_id, "http://127.0.0.1:5588/login", oauth_url_callback).set_success_page_content(success_page_content).flow()
             return self
@@ -1710,6 +1729,7 @@ class Session(Closeable, MessageListener, SubListener):
             for attempt in range(1, max_attempts + 1):
                 session: typing.Optional[Session] = None
                 try:
+                    assert self.conf is not None, "Configuration not set"
                     session = Session(
                         Session.Inner(
                             self.device_type,
@@ -1741,7 +1761,9 @@ class Session(Closeable, MessageListener, SubListener):
                         )
                         time.sleep(delay)
 
-            raise last_exception
+            if last_exception is not None:
+                raise last_exception
+            raise RuntimeError("Failed to connect")
 
     class Configuration:
         """ """
@@ -2066,10 +2088,10 @@ class Session(Closeable, MessageListener, SubListener):
 
     class Inner:
         """ """
-        device_type: Connect.DeviceType = None
+        device_type: typing.Optional[Connect.DeviceType] = None
         device_name: str
         device_id: str
-        conf = None
+        conf: typing.Optional[Session.Configuration] = None
         preferred_locale: str
 
         def __init__(
@@ -2078,7 +2100,7 @@ class Session(Closeable, MessageListener, SubListener):
             device_name: str,
             preferred_locale: str,
             conf: Session.Configuration,
-            device_id: str = None,
+            device_id: typing.Optional[str] = None,
         ):
             self.preferred_locale = preferred_locale
             self.conf = conf
@@ -2109,8 +2131,10 @@ class Session(Closeable, MessageListener, SubListener):
             self.__session.logger.info("Session.Receiver started")
             while self.__running:
                 packet: Packet
-                cmd: bytes
+                cmd: typing.Optional[bytes]
                 try:
+                    assert self.__session.cipher_pair is not None
+                    assert self.__session.connection is not None
                     packet = self.__session.cipher_pair.receive_encoded(
                         self.__session.connection)
                     cmd = Packet.Type.parse(packet.cmd)
@@ -2145,10 +2169,10 @@ class Session(Closeable, MessageListener, SubListener):
                 elif cmd == Packet.Type.pong_ack:
                     continue
                 elif cmd == Packet.Type.country_code:
-                    self.__session.__country_code = packet.payload.decode()
+                    self.__session.country_code = packet.payload.decode()
                     self.__session.logger.info(
                         "Received country_code: {}".format(
-                            self.__session.__country_code))
+                            self.__session.country_code))
                 elif cmd == Packet.Type.license_version:
                     license_version = io.BytesIO(packet.payload)
                     license_id = struct.unpack(">h",
@@ -2359,9 +2383,12 @@ class TokenProvider:
         :param scope: str:
 
         """
-        return self.get_token(scope).access_token
+        token = self.get_token(scope)
+        if token is None:
+            raise RuntimeError("Failed to get token for scope: {}".format(scope))
+        return token.access_token
 
-    def get_token(self, *scopes) -> StoredToken:
+    def get_token(self, *scopes) -> typing.Optional[StoredToken]:
         """
 
         :param *scopes:

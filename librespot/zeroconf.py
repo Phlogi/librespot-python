@@ -86,7 +86,7 @@ class ZeroconfServer(Closeable):
         threading.Thread(target=self.__zeroconf.start,
                          name="zeroconf-multicast-dns-server").start()
 
-    def add_session_listener(self, listener: ZeroconfServer):
+    def add_session_listener(self, listener: SessionListener):
         self.__session_listeners.append(listener)
 
     def close(self) -> None:
@@ -103,10 +103,7 @@ class ZeroconfServer(Closeable):
 
     def get_useful_hostname(self) -> str:
         host = socket.gethostname()
-        if host == "localhost":
-            pass
-        else:
-            return host
+        return host
 
     def handle_add_user(self, __socket: socket.socket, params: dict[str, str],
                         http_version: str) -> None:
@@ -121,6 +118,7 @@ class ZeroconfServer(Closeable):
         client_key_str = params.get("clientKey")
         if not client_key_str:
             self.logger.error("Missing clientKey!")
+            return
         with self.__connection_lock:
             if username == self.__connecting_username:
                 self.logger.info(
@@ -185,6 +183,7 @@ class ZeroconfServer(Closeable):
             .create()
         with self.__connection_lock:
             self.__connecting_username = None
+        assert self.__session is not None
         for session_listener in self.__session_listeners:
             session_listener.session_changed(self.__session)
 
@@ -197,9 +196,12 @@ class ZeroconfServer(Closeable):
             self.__keys.public_key_bytes()).decode()
         info["deviceType"] = Connect.DeviceType.Name(self.__inner.device_type)
         with self.__connection_lock:
-            info[
-                "activeUser"] = self.__connecting_username if self.__connecting_username is not None else self.__session.username(
-                ) if self.has_valid_session() else ""
+            if self.__connecting_username is not None:
+                info["activeUser"] = self.__connecting_username
+            elif self.has_valid_session() and self.__session is not None:
+                info["activeUser"] = self.__session.username()
+            else:
+                info["activeUser"] = ""
         __socket.send(http_version.encode())
         __socket.send(b" 200 OK")
         __socket.send(self.__eol)
@@ -209,7 +211,7 @@ class ZeroconfServer(Closeable):
         __socket.send(json.dumps(info).encode())
 
     def has_valid_session(self) -> bool:
-        valid = self.__session and self.__session.is_valid()
+        valid = self.__session is not None and self.__session.is_valid()
         if not valid:
             self.__session = None
         return valid
@@ -233,7 +235,7 @@ class ZeroconfServer(Closeable):
             self.listen_port = listen_port
             return self
 
-        def create(self) -> ZeroconfServer:
+        def create(self) -> ZeroconfServer:  # type: ignore[override]
             return ZeroconfServer(
                 ZeroconfServer.Inner(self.device_type, self.device_name,
                                      self.device_id, self.preferred_locale,
@@ -329,15 +331,15 @@ class ZeroconfServer(Closeable):
                     "Unknown action: {}".format(action))
 
     class Inner:
-        conf: typing.Final[Session.Configuration]
-        device_name: typing.Final[str]
-        device_id: typing.Final[str]
-        device_type: typing.Final[Connect.DeviceType]
-        preferred_locale: typing.Final[str]
+        conf: typing.Optional[Session.Configuration]
+        device_name: str
+        device_id: str
+        device_type: Connect.DeviceType
+        preferred_locale: str
 
         def __init__(self, device_type: Connect.DeviceType, device_name: str,
-                     device_id: str, preferred_locale: str,
-                     conf: Session.Configuration):
+                     device_id: typing.Optional[str], preferred_locale: str,
+                     conf: typing.Optional[Session.Configuration]):
             self.conf = conf
             self.device_name = device_name
             self.device_id = util.random_hex_string(

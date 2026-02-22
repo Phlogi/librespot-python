@@ -49,7 +49,7 @@ class GeneralAudioStream:
 
 
 class GeneralWritableStream:
-    def write_chunk(self, buffer: bytearray, chunk_index: int, cached: bool):
+    def write_chunk(self, chunk: bytes, chunk_index: int, cached: bool):
         raise NotImplementedError
 
 
@@ -62,7 +62,7 @@ class HaltListener:
 
 
 class MessageListener:
-    def on_message(self, uri: str, headers: CaseInsensitiveDict[str, str],
+    def on_message(self, uri: str, headers: CaseInsensitiveDict[str],
                    payload: bytes):
         raise NotImplementedError
 

@@ -288,7 +288,7 @@ class Shannon:
         self.nbuf = 0
 
     def nonce(self, nonce: typing.Union[bytes, int]) -> None:
-        if type(nonce) is int:
+        if isinstance(nonce, int):
             nonce = bytes(struct.pack(">I", nonce))
         self.reload_state()
         self.konst = self.initkonst
@@ -296,17 +296,17 @@ class Shannon:
         self.gen_konst()
         self.nbuf = 0
 
-    def encrypt(self, buffer: bytes, n: int = None) -> bytes:
+    def encrypt(self, buffer: bytes, n: typing.Optional[int] = None) -> bytes:
         if n is None:
             return self.encrypt(buffer, len(buffer))
-        buffer = bytearray(buffer)
+        buf = bytearray(buffer)
         i = 0
         j: int
         t: int
         if self.nbuf != 0:
             while self.nbuf != 0 and n != 0:
-                self.mbuf ^= (buffer[i] & 0xff) << (32 - self.nbuf)
-                buffer[i] ^= (self.sbuf >> (32 - self.nbuf)) & 0xff
+                self.mbuf ^= (buf[i] & 0xff) << (32 - self.nbuf)
+                buf[i] ^= (self.sbuf >> (32 - self.nbuf)) & 0xff
                 i += 1
                 self.nbuf -= 8
                 n -= 1
@@ -316,16 +316,16 @@ class Shannon:
         j = n & ~0x03
         while i < j:
             self.cycle()
-            t = ((buffer[i + 3] & 0xFF) << 24) | \
-                ((buffer[i + 2] & 0xFF) << 16) | \
-                ((buffer[i + 1] & 0xFF) << 8) | \
-                (buffer[i] & 0xFF)
+            t = ((buf[i + 3] & 0xFF) << 24) | \
+                ((buf[i + 2] & 0xFF) << 16) | \
+                ((buf[i + 1] & 0xFF) << 8) | \
+                (buf[i] & 0xFF)
             self.mac_func(t)
             t ^= self.sbuf
-            buffer[i + 3] = (t >> 24) & 0xFF
-            buffer[i + 2] = (t >> 16) & 0xFF
-            buffer[i + 1] = (t >> 8) & 0xFF
-            buffer[i] = t & 0xFF
+            buf[i + 3] = (t >> 24) & 0xFF
+            buf[i + 2] = (t >> 16) & 0xFF
+            buf[i + 1] = (t >> 8) & 0xFF
+            buf[i] = t & 0xFF
             i += 4
         n &= 0x03
         if n != 0:
@@ -333,24 +333,24 @@ class Shannon:
             self.mbuf = 0
             self.nbuf = 32
             while self.nbuf != 0 and n != 0:
-                self.mbuf ^= (buffer[i] & 0xff) << (32 - self.nbuf)
-                buffer[i] ^= (self.sbuf >> (32 - self.nbuf)) & 0xff
+                self.mbuf ^= (buf[i] & 0xff) << (32 - self.nbuf)
+                buf[i] ^= (self.sbuf >> (32 - self.nbuf)) & 0xff
                 i += 1
                 self.nbuf -= 8
                 n -= 1
-        return bytes(buffer)
+        return bytes(buf)
 
-    def decrypt(self, buffer: bytes, n: int = None) -> bytes:
+    def decrypt(self, buffer: bytes, n: typing.Optional[int] = None) -> bytes:
         if n is None:
             return self.decrypt(buffer, len(buffer))
-        buffer = bytearray(buffer)
+        buf = bytearray(buffer)
         i = 0
         j: int
         t: int
         if self.nbuf != 0:
             while self.nbuf != 0 and n != 0:
-                buffer[i] ^= (self.sbuf >> (32 - self.nbuf)) & 0xff
-                self.mbuf ^= (buffer[i] & 0xff) << (32 - self.nbuf)
+                buf[i] ^= (self.sbuf >> (32 - self.nbuf)) & 0xff
+                self.mbuf ^= (buf[i] & 0xff) << (32 - self.nbuf)
                 i += 1
                 self.nbuf -= 8
                 n -= 1
@@ -360,16 +360,16 @@ class Shannon:
         j = n & ~0x03
         while i < j:
             self.cycle()
-            t = ((buffer[i + 3] & 0xFF) << 24) | \
-                ((buffer[i + 2] & 0xFF) << 16) | \
-                ((buffer[i + 1] & 0xFF) << 8) | \
-                (buffer[i] & 0xFF)
+            t = ((buf[i + 3] & 0xFF) << 24) | \
+                ((buf[i + 2] & 0xFF) << 16) | \
+                ((buf[i + 1] & 0xFF) << 8) | \
+                (buf[i] & 0xFF)
             t ^= self.sbuf
             self.mac_func(t)
-            buffer[i + 3] = (t >> 24) & 0xFF
-            buffer[i + 2] = (t >> 16) & 0xFF
-            buffer[i + 1] = (t >> 8) & 0xFF
-            buffer[i] = t & 0xFF
+            buf[i + 3] = (t >> 24) & 0xFF
+            buf[i + 2] = (t >> 16) & 0xFF
+            buf[i + 1] = (t >> 8) & 0xFF
+            buf[i] = t & 0xFF
             i += 4
         n &= 0x03
         if n != 0:
@@ -377,12 +377,12 @@ class Shannon:
             self.mbuf = 0
             self.nbuf = 32
             while self.nbuf != 0 and n != 0:
-                buffer[i] ^= (self.sbuf >> (32 - self.nbuf)) & 0xff
-                self.mbuf ^= (buffer[i] & 0xff) << (32 - self.nbuf)
+                buf[i] ^= (self.sbuf >> (32 - self.nbuf)) & 0xff
+                self.mbuf ^= (buf[i] & 0xff) << (32 - self.nbuf)
                 i += 1
                 self.nbuf -= 8
                 n -= 1
-        return bytes(buffer)
+        return bytes(buf)
 
     def finish(self, n: int) -> bytes:
         buffer = bytearray(4)

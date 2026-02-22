@@ -15,7 +15,7 @@ import urllib.parse
 class DeviceStateHandler(Closeable, MessageListener, RequestListener):
     logger = logging.getLogger("Librespot:DeviceStateHandler")
     __closing = False
-    __connection_id: str = None
+    __connection_id: typing.Optional[str] = None
     __device_info: Connect.DeviceInfo
     __put_state: Connect.PutStateRequest
     __put_state_worker = concurrent.futures.ThreadPoolExecutor()
@@ -72,6 +72,7 @@ class DeviceStateHandler(Closeable, MessageListener, RequestListener):
         )
 
     def put_connect_state(self, request: Connect.PutStateRequest):
+        assert self.__connection_id is not None, "Connection ID not set"
         self.__session.api().put_connect_state(self.__connection_id, request)
         self.logger.info("Put state. [ts: {}, connId: {}, reason: {}]".format(
             request.client_side_timestamp, self.__connection_id,
@@ -145,29 +146,29 @@ class PlayerConfiguration:
         volume_steps: int = 64
 
         def set_preferred_quality(
-                self, preferred_quality: AudioQuality) -> __class__:
+                self, preferred_quality: AudioQuality) -> PlayerConfiguration.Builder:
             self.preferred_quality = preferred_quality
             return self
 
         def set_enable_normalisation(self,
-                                     enable_normalisation: bool) -> __class__:
+                                     enable_normalisation: bool) -> PlayerConfiguration.Builder:
             self.enable_normalisation = enable_normalisation
             return self
 
         def set_normalisation_pregain(
-                self, normalisation_pregain: float) -> __class__:
+                self, normalisation_pregain: float) -> PlayerConfiguration.Builder:
             self.normalisation_pregain = normalisation_pregain
             return self
 
-        def set_autoplay_enabled(self, autoplay_enabled: bool) -> __class__:
+        def set_autoplay_enabled(self, autoplay_enabled: bool) -> PlayerConfiguration.Builder:
             self.autoplay_enabled = autoplay_enabled
             return self
 
-        def set_crossfade_duration(self, crossfade_duration: int) -> __class__:
+        def set_crossfade_duration(self, crossfade_duration: int) -> PlayerConfiguration.Builder:
             self.crossfade_duration = crossfade_duration
             return self
 
-        def set_preload_enabled(self, preload_enabled: bool) -> __class__:
+        def set_preload_enabled(self, preload_enabled: bool) -> PlayerConfiguration.Builder:
             self.preload_enabled = preload_enabled
             return self
 
@@ -201,6 +202,6 @@ class StateWrapper(MessageListener):
             "hm://collection/collection/" + session.username() + "/json"
         ])
 
-    def on_message(self, uri: str, headers: CaseInsensitiveDict[str, str],
+    def on_message(self, uri: str, headers: CaseInsensitiveDict[str],
                    payload: bytes):
         pass

@@ -27,7 +27,7 @@ if typing.TYPE_CHECKING:
 
 class AbsChunkedInputStream(io.BytesIO, HaltListener):
     chunk_exception = None
-    closed = False
+    _closed = False
     max_chunk_tries = 128
     preload_ahead = 3
     preload_chunk_retries = 2
@@ -44,8 +44,12 @@ class AbsChunkedInputStream(io.BytesIO, HaltListener):
         self.retries = [0] * self.chunks()
         self.retry_on_chunk_error = retry_on_chunk_error
 
+    @property
+    def closed(self) -> bool:  # type: ignore[override]
+        return self._closed
+
     def is_closed(self) -> bool:
-        return self.closed
+        return self._closed
 
     def buffer(self) -> typing.List[bytes]:
         raise NotImplementedError()
@@ -54,7 +58,7 @@ class AbsChunkedInputStream(io.BytesIO, HaltListener):
         raise NotImplementedError()
 
     def close(self) -> None:
-        self.closed = True
+        self._closed = True
         with self.wait_lock:
             self.wait_lock.notify_all()
 
@@ -73,18 +77,19 @@ class AbsChunkedInputStream(io.BytesIO, HaltListener):
     def pos(self) -> int:
         return self.__pos
 
-    def seek(self, where: int, **kwargs) -> None:
+    def seek(self, where: int, whence: int = 0) -> int:  # type: ignore[override]
         if where < 0:
             raise TypeError()
-        if self.closed:
+        if self._closed:
             raise IOError("Stream is closed!")
         self.__pos = where
         self.check_availability(int(self.__pos / (128 * 1024)), False, False)
+        return self.__pos
 
     def skip(self, n: int) -> int:
         if n < 0:
             raise TypeError()
-        if self.closed:
+        if self._closed:
             raise IOError("Stream is closed!")
         k = self.size() - self.__pos
         if n < k:
@@ -135,7 +140,7 @@ class AbsChunkedInputStream(io.BytesIO, HaltListener):
                 self.chunk_exception = None
                 self.wait_for_chunk = chunk
                 self.wait_lock.wait_for(lambda: self.available_chunks()[chunk])
-                if self.closed:
+                if self._closed:
                     return
                 if self.chunk_exception is not None:
                     if self.should_retry(chunk):
@@ -148,10 +153,10 @@ class AbsChunkedInputStream(io.BytesIO, HaltListener):
                 time.sleep(math.log10(self.retries[chunk]))
                 self.check_availability(chunk, True, True)
 
-    def read(self, __size: int = 0) -> bytes:
-        if self.closed:
+    def read(self, __size: int | None = 0) -> bytes:
+        if self._closed:
             raise IOError("Stream is closed!")
-        if __size <= 0:
+        if __size is None or __size <= 0:
             if self.__pos == self.size():
                 return b""
             buffer = io.BytesIO()
@@ -199,7 +204,7 @@ class AbsChunkedInputStream(io.BytesIO, HaltListener):
         self.available_chunks()[index] = True
         self.__decoded_length += len(self.buffer()[index])
         with self.wait_lock:
-            if index == self.wait_for_chunk and not self.closed:
+            if index == self.wait_for_chunk and not self._closed:
                 self.wait_for_chunk = -1
                 self.wait_lock.notify_all()
 
@@ -208,7 +213,7 @@ class AbsChunkedInputStream(io.BytesIO, HaltListener):
         self.requested_chunks()[index] = False
         self.retries[index] += 1
         with self.wait_lock:
-            if index == self.wait_for_chunk and not self.closed:
+            if index == self.wait_for_chunk and not self._closed:
                 self.chunk_exception = ex
                 self.wait_for_chunk = -1
                 self.wait_lock.notify_all()
@@ -309,7 +314,7 @@ class AudioKeyManager(PacketsReceiver, Closeable):
                 self.__reference.put(None)
                 self.__reference_lock.notify_all()
 
-        def wait_response(self) -> bytes:
+        def wait_response(self) -> typing.Optional[bytes]:
             with self.__reference_lock:
                 self.__reference_lock.wait(
                     AudioKeyManager.audio_key_request_timeout)
@@ -320,7 +325,7 @@ class AudioKeyManager(PacketsReceiver, Closeable):
 
 
 class CdnFeedHelper:
-    _LOGGER: logging = logging.getLogger(__name__)
+    _LOGGER: logging.Logger = logging.getLogger(__name__)
 
     @staticmethod
     def get_url(resp: StorageResolve.StorageResolveResponse) -> str:
@@ -334,7 +339,7 @@ class CdnFeedHelper:
             session: Session, track: Metadata.Track, file: Metadata.AudioFile,
             resp_or_url: typing.Union[StorageResolve.StorageResolveResponse,
                                       str], preload: bool,
-            halt_listener: HaltListener) -> LoadedStream:
+            halt_listener: typing.Optional[HaltListener]) -> LoadedStream:
         if type(resp_or_url) is str:
             url = resp_or_url
         else:
@@ -358,7 +363,7 @@ class CdnFeedHelper:
     @staticmethod
     def load_episode_external(
             session: Session, episode: Metadata.Episode,
-            halt_listener: HaltListener) -> LoadedStream:
+            halt_listener: typing.Optional[HaltListener]) -> LoadedStream:
         resp = session.client().head(episode.external_url)
 
         if resp.status_code != 200:
@@ -384,7 +389,7 @@ class CdnFeedHelper:
         file: Metadata.AudioFile,
         resp_or_url: typing.Union[StorageResolve.StorageResolveResponse, str],
         preload: bool,
-        halt_listener: HaltListener,
+        halt_listener: typing.Optional[HaltListener],
     ) -> LoadedStream:
         if type(resp_or_url) is str:
             url = resp_or_url
@@ -408,16 +413,18 @@ class CdnFeedHelper:
 
 
 class CdnManager:
-    logger: logging = logging.getLogger("Librespot:CdnManager")
+    logger: logging.Logger = logging.getLogger("Librespot:CdnManager")
     __session: Session
 
     def __init__(self, session: Session):
         self.__session = session
 
     def get_head(self, file_id: bytes):
-        response = self.__session.client() \
-            .get(self.__session.get_user_attribute("head-files-url", "https://heads-fa.spotify.com/head/{file_id}")
-                 .replace("{file_id}", util.bytes_to_hex(file_id)))
+        head_url = self.__session.get_user_attribute(
+            "head-files-url", "https://heads-fa.spotify.com/head/{file_id}")
+        assert head_url is not None
+        response = self.__session.client().get(
+            head_url.replace("{file_id}", util.bytes_to_hex(file_id)))
         if response.status_code != 200:
             raise IOError("{}".format(response.status_code))
         body = response.content
@@ -427,7 +434,7 @@ class CdnManager:
 
     def stream_external_episode(self, episode: Metadata.Episode,
                                 external_url: str,
-                                halt_listener: HaltListener):
+                                halt_listener: typing.Optional[HaltListener]):
         return CdnManager.Streamer(
             self.__session,
             StreamId(episode=episode),
@@ -439,7 +446,7 @@ class CdnManager:
         )
 
     def stream_file(self, file: Metadata.AudioFile, key: bytes, url: str,
-                    halt_listener: HaltListener):
+                    halt_listener: typing.Optional[HaltListener]):
         return CdnManager.Streamer(
             self.__session,
             StreamId(file=file),
@@ -473,46 +480,42 @@ class CdnManager:
 
     class InternalResponse:
         buffer: bytes
-        headers: CaseInsensitiveDict[str, str]
+        headers: CaseInsensitiveDict[str]
 
-        def __init__(self, buffer: bytes, headers: CaseInsensitiveDict[str, str]):
+        def __init__(self, buffer: bytes, headers: CaseInsensitiveDict[str]):
             self.buffer = buffer
             self.headers = headers
 
     class CdnUrl:
-        __cdn_manager = None
-        __file_id: bytes
+        __cdn_manager: typing.Optional[CdnManager] = None
+        __file_id: typing.Optional[bytes]
         __expiration: int
-        url: str
+        _url: str
 
-        def __init__(self, cdn_manager, file_id: typing.Union[bytes, None],
-                     url: str):
-            self.__cdn_manager: CdnManager = cdn_manager
+        def __init__(self, cdn_manager: typing.Optional[CdnManager],
+                     file_id: typing.Optional[bytes], url: str):
+            self.__cdn_manager = cdn_manager
             self.__file_id = file_id
             self.set_url(url)
 
-        def url(self):
+        @property
+        def url(self) -> str:
             if self.__expiration == -1:
-                return self.url
+                return self._url
             if self.__expiration <= int(time.time() * 1000) + 5 * 60 * 1000:
-                self.url = self.__cdn_manager.get_audio_url(self.__file_id)
-            return self.url
+                if self.__cdn_manager is not None and self.__file_id is not None:
+                    self._url = self.__cdn_manager.get_audio_url(self.__file_id)
+            return self._url
 
-        def set_url(self, url: str):
-            self.url = url
-            if self.__file_id is not None:
+        def set_url(self, url: str) -> None:
+            self._url = url
+            if self.__file_id is not None and self.__cdn_manager is not None:
                 token_url = urllib.parse.urlparse(url)
                 token_query = urllib.parse.parse_qs(token_url.query)
                 token_list = token_query.get("__token__")
-                try:
-                    token_str = str(token_list[0])
-                except TypeError:
-                    token_str = ""
+                token_str = str(token_list[0]) if token_list else ""
                 expires_list = token_query.get("Expires")
-                try:
-                    expires_str = str(expires_list[0])
-                except TypeError:
-                    expires_str = ""
+                expires_str = str(expires_list[0]) if expires_list else ""
                 if token_str != "None" and len(token_str) != 0:
                     expire_at = None
                     split = token_str.split("~")
@@ -557,7 +560,7 @@ class CdnManager:
         buffer: typing.List[bytes]
         chunks: int
         executor_service = concurrent.futures.ThreadPoolExecutor()
-        halt_listener: HaltListener
+        halt_listener: typing.Optional[HaltListener]
         requested: typing.List[bool]
         size: int
         __audio_format: SuperAudioFormat
@@ -570,7 +573,7 @@ class CdnManager:
         def __init__(self, session: Session, stream_id: StreamId,
                      audio_format: SuperAudioFormat,
                      cdn_url: CdnManager.CdnUrl, cache: CacheManager,
-                     audio_decrypt: AudioDecrypt, halt_listener: HaltListener):
+                     audio_decrypt: AudioDecrypt, halt_listener: typing.Optional[HaltListener]):
             self.__session = session
             self.__stream_id = stream_id
             self.__audio_format = audio_format
@@ -624,8 +627,9 @@ class CdnManager:
             response = self.request(index)
             self.write_chunk(response.buffer, index, False)
 
-        def request(self, chunk: int = None, range_start: int = None, range_end: int = None)\
-                -> CdnManager.InternalResponse:
+        def request(self, chunk: typing.Optional[int] = None,
+                    range_start: typing.Optional[int] = None,
+                    range_end: typing.Optional[int] = None) -> CdnManager.InternalResponse:
             if chunk is None and range_start is None and range_end is None:
                 raise TypeError()
             if chunk is not None:
@@ -675,18 +679,20 @@ class CdnManager:
                     .submit(lambda: self.streamer.request_chunk(index))
 
             def stream_read_halted(self, chunk: int, _time: int) -> None:
-                if self.streamer.halt_listener is not None:
+                hl = self.streamer.halt_listener
+                if hl is not None:
                     self.streamer.executor_service\
-                        .submit(lambda: self.streamer.halt_listener.stream_read_halted(chunk, _time))
+                        .submit(lambda: hl.stream_read_halted(chunk, _time))
 
             def stream_read_resumed(self, chunk: int, _time: int) -> None:
-                if self.streamer.halt_listener is not None:
+                hl = self.streamer.halt_listener
+                if hl is not None:
                     self.streamer.executor_service \
-                        .submit(lambda: self.streamer.halt_listener.stream_read_resumed(chunk, _time))
+                        .submit(lambda: hl.stream_read_resumed(chunk, _time))
 
 
 class NormalizationData:
-    _LOGGER: logging = logging.getLogger(__name__)
+    _LOGGER: logging.Logger = logging.getLogger(__name__)
     track_gain_db: float
     track_peak: float
     album_gain_db: float
@@ -747,7 +753,7 @@ class PlayableContentFeeder:
 
     def load_stream(self, file: Metadata.AudioFile, track: Metadata.Track,
                     episode: Metadata.Episode, preload: bool,
-                    halt_lister: HaltListener):
+                    halt_lister: typing.Optional[HaltListener]) -> typing.Optional[LoadedStream]:
         if track is None and episode is None:
             raise RuntimeError("No content passed!")
         elif file is None:
@@ -771,7 +777,7 @@ class PlayableContentFeeder:
 
     def load_episode(self, episode_id: EpisodeId,
                      audio_quality_picker: AudioQualityPicker, preload: bool,
-                     halt_listener: HaltListener) -> LoadedStream:
+                     halt_listener: typing.Optional[HaltListener]) -> typing.Optional[LoadedStream]:
         episode = self.__session.api().get_metadata_4_episode(episode_id)
         if episode.external_url:
             return CdnFeedHelper.load_episode_external(self.__session, episode,
@@ -787,8 +793,8 @@ class PlayableContentFeeder:
     def load_track(self, track_id_or_track: typing.Union[TrackId,
                                                          Metadata.Track],
                    audio_quality_picker: AudioQualityPicker, preload: bool,
-                   halt_listener: HaltListener):
-        if type(track_id_or_track) is TrackId:
+                   halt_listener: typing.Optional[HaltListener]):
+        if isinstance(track_id_or_track, TrackId):
             original = self.__session.api().get_metadata_4_track(
                 track_id_or_track)
             track = self.pick_alternative_if_necessary(original)
@@ -854,18 +860,18 @@ class PlayableContentFeeder:
 
 
 class LoadedStream:
-    episode: Metadata.Episode
-    track: Metadata.Track
+    episode: typing.Optional[Metadata.Episode]
+    track: typing.Optional[Metadata.Track]
     input_stream: GeneralAudioStream
-    normalization_data: NormalizationData
+    normalization_data: typing.Optional[NormalizationData]
     metrics: Metrics
 
     class Metrics:
-        file_id: str
+        file_id: typing.Optional[str]
         preloaded_audio_key: bool
         audio_key_time: int
 
-        def __init__(self, file_id: typing.Union[bytes, None],
+        def __init__(self, file_id: typing.Optional[bytes],
                         preloaded_audio_key: bool, audio_key_time: int):
             self.file_id = None if file_id is None else util.bytes_to_hex(
                 file_id)
@@ -874,8 +880,8 @@ class LoadedStream:
 
     def __init__(self, track_or_episode: typing.Union[Metadata.Track, Metadata.Episode],
                     input_stream: GeneralAudioStream,
-                    normalization_data: typing.Union[NormalizationData, None],
-                    file_id: str, preloaded_audio_key: bool, audio_key_time: int):
+                    normalization_data: typing.Optional[NormalizationData],
+                    file_id: typing.Optional[bytes], preloaded_audio_key: bool, audio_key_time: int):
         if type(track_or_episode) is Metadata.Track:
             self.track = track_or_episode
             self.episode = None
@@ -890,12 +896,12 @@ class LoadedStream:
 
 
 class StreamId:
-    file_id: bytes
-    episode_gid: bytes
+    file_id: typing.Optional[bytes]
+    episode_gid: typing.Optional[bytes]
 
     def __init__(self,
-                 file: Metadata.AudioFile = None,
-                 episode: Metadata.Episode = None):
+                 file: typing.Optional[Metadata.AudioFile] = None,
+                 episode: typing.Optional[Metadata.Episode] = None):
         if file is None and episode is None:
             return
         self.file_id = None if file is None else file.file_id

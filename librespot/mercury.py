@@ -368,8 +368,8 @@ class RawMercuryRequest:
 
         def add_user_field(self,
                            field: Mercury.UserField = None,
-                           key: str = None,
-                           value: str = None):
+                           key: typing.Optional[str] = None,
+                           value: typing.Optional[str] = None):
             if field is None and (key is None or value is None):
                 return self
             try:

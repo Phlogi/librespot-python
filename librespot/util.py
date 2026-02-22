@@ -57,8 +57,8 @@ class Base62:
         return self.translate(indices, self.alphabet)
 
     def decode(self, encoded: bytes, length: int = -1):
-        prepared = self.translate(encoded, self.lookup)
-        return self.convert(prepared, self.target_base, self.standard_base,
+        prepared = self.translate(encoded, bytes(self.lookup))
+        return self.convert(bytes(prepared), self.target_base, self.standard_base,
                             length)
 
     def translate(self, indices: bytes, dictionary: bytes):
