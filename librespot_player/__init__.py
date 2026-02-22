@@ -1,7 +1,7 @@
 from __future__ import annotations
 from librespot import Version
 from librespot.audio.decoders import AudioQuality
-from librespot.core import Session
+from librespot.session import Session
 from librespot.mercury import MercuryRequests
 from librespot.proto import Connect_pb2 as Connect
 from librespot.structure import Closeable, MessageListener, RequestListener

@@ -3,7 +3,7 @@ from Cryptodome.Cipher import AES
 from Cryptodome.Hash import HMAC, SHA1
 from Cryptodome.Util import Counter
 from librespot import util, Version
-from librespot.core import Session
+from librespot.session import Session
 from librespot.crypto import DiffieHellman
 from librespot.proto import Connect_pb2 as Connect
 from librespot.structure import Closeable, Runnable, SessionListener
