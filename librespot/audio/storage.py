@@ -136,13 +136,20 @@ class ChannelManager(Closeable, PacketsReceiver):
                 self.__channel = channel
 
             def run(self) -> None:
-                # NOTE: This handler is incomplete — the non-CDN (STORAGE)
-                # streaming path is not implemented. All audio streaming
-                # currently goes through CdnManager.Streamer instead.
                 self.__channel.channel_manager.logger.debug(
                     "ChannelManager.Handler is starting")
-                with self.__channel.q.all_tasks_done:
+                try:
+                    while True:
+                        payload = self.__channel.q.get()
+                        if payload is None:
+                            break
+                        try:
+                            if self.__channel._handle(payload):
+                                break
+                        finally:
+                            self.__channel.q.task_done()
+                finally:
                     self.__channel.channel_manager.channels.pop(
-                        self.__channel.chunk_id)
-                self.__channel.channel_manager.logger.debug(
-                    "ChannelManager.Handler is shutting down")
+                        self.__channel.chunk_id, None)
+                    self.__channel.channel_manager.logger.debug(
+                        "ChannelManager.Handler is shutting down")
