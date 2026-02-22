@@ -6,7 +6,7 @@ import tempfile
 
 import pytest
 
-from librespot.core import Session
+from librespot.session import Session
 from librespot.metadata import (
     AlbumId,
     ArtistId,

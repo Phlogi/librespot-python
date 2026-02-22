@@ -14,7 +14,7 @@ from librespot.audio.decoders import (
     VorbisOnlyAudioQuality,
 )
 from librespot.audio.format import SuperAudioFormat
-from librespot.core import Session
+from librespot.session import Session
 from librespot.metadata import EpisodeId
 
 from tests.conftest import (
