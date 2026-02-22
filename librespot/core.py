@@ -469,6 +469,12 @@ class DealerClient(Closeable):
 
     def close(self) -> None:
         """ """
+        if self.__last_scheduled_reconnection is not None:
+            self.__last_scheduled_reconnection.cancel()
+            self.__last_scheduled_reconnection = None
+        if self.__connection is not None:
+            self.__connection.close()
+            self.__connection = None
         self.__worker.shutdown()
 
     def connect(self) -> None:
@@ -503,6 +509,9 @@ class DealerClient(Closeable):
 
         """
         uri = obj.get("uri")
+        if uri is None:
+            self.logger.warning("Received message with no uri, ignoring.")
+            return
         headers = self.__get_headers(obj)
         payloads = obj.get("payloads")
         decoded_payloads: typing.Any
@@ -547,6 +556,9 @@ class DealerClient(Closeable):
         key = obj.get("key")
         headers = self.__get_headers(obj)
         payload = obj.get("payload")
+        if payload is None:
+            self.logger.warning("Received request with no payload, ignoring.")
+            return
         if headers.get("Transfer-Encoding") == "gzip":
             gz = base64.b64decode(payload.get("compressed"))
             payload = json.loads(gzip.decompress(gz))
@@ -605,7 +617,7 @@ class DealerClient(Closeable):
     def wait_for_listener(self) -> None:
         """ """
         with self.__message_listeners_lock:
-            if self.__message_listeners == {}:
+            if self.__message_listeners:
                 return
             self.__message_listeners_lock.wait()
 
@@ -633,7 +645,18 @@ class DealerClient(Closeable):
             self.__session = session
             self.__dealer_client = dealer_client
             self.__url = url
-            self.__ws = websocket.WebSocketApp(url)
+            self.__ws = websocket.WebSocketApp(
+                url,
+                on_open=self.on_open,
+                on_message=self.on_message,
+                on_error=self.on_failure,
+            )
+            self.__ws_thread = threading.Thread(
+                target=self.__ws.run_forever,
+                name="dealer-websocket",
+                daemon=True,
+            )
+            self.__ws_thread.start()
 
         def close(self):
             """ """
@@ -751,10 +774,11 @@ class EventService(Closeable):
     """ """
     logger = logging.getLogger("Librespot:EventService")
     __session: Session
-    __worker = concurrent.futures.ThreadPoolExecutor()
+    __worker: concurrent.futures.ThreadPoolExecutor
 
     def __init__(self, session: Session):
         self.__session = session
+        self.__worker = concurrent.futures.ThreadPoolExecutor()
 
     def __worker_callback(self, event_builder: EventBuilder):
         try:
@@ -944,6 +968,7 @@ class Session(Closeable, MessageListener, SubListener):
     def __init__(self, inner: Inner, address: str) -> None:
         assert inner.conf is not None, "Configuration not set"
         self.scheduled_reconnect = None
+        self.__reconnect_lock = threading.Lock()
         self.__auth_lock = threading.Condition()
         self.__auth_lock_bool = False
         self.__closed = False
@@ -1040,6 +1065,9 @@ class Session(Closeable, MessageListener, SubListener):
         self.logger.info("Closing session. device_id: {}".format(
             self.__inner.device_id))
         self.__closing = True
+        if self.scheduled_reconnect is not None:
+            self.scheduled_reconnect.cancel()
+            self.scheduled_reconnect = None
         if self.__dealer_client is not None:
             self.__dealer_client.close()
             self.__dealer_client = None
@@ -1273,54 +1301,64 @@ class Session(Closeable, MessageListener, SubListener):
         Retries with exponential backoff when the access-point is
         unreachable or drops the connection.
         """
-        if self.connection is not None:
-            self.connection.close()
+        if not self.__reconnect_lock.acquire(blocking=False):
+            self.logger.debug("Reconnect already in progress, skipping.")
+            return
+        try:
+            if self.scheduled_reconnect is not None:
+                self.scheduled_reconnect.cancel()
+                self.scheduled_reconnect = None
+
             if self.__receiver is not None:
                 self.__receiver.stop()
+            if self.connection is not None:
+                self.connection.close()
 
-        max_attempts = int(os.getenv("LIBRESPOT_RETRY_ATTEMPTS", "5"))
-        last_exception: typing.Optional[Exception] = None
+            max_attempts = int(os.getenv("LIBRESPOT_RETRY_ATTEMPTS", "5"))
+            last_exception: typing.Optional[Exception] = None
 
-        for attempt in range(1, max_attempts + 1):
-            try:
-                self.connection = Session.ConnectionHolder.create(
-                    ApResolver.get_random_accesspoint(), self.__inner.conf)
-                self.connect()
-                self.__authenticate_partial(
-                    Authentication.LoginCredentials(
-                        typ=self.__ap_welcome.reusable_auth_credentials_type,
-                        username=self.__ap_welcome.canonical_username,
-                        auth_data=self.__ap_welcome.reusable_auth_credentials,
-                    ),
-                    True,
-                )
-                self.logger.info("Re-authenticated as {}!".format(
-                    self.__ap_welcome.canonical_username))
-                return
-            except Exception as ex:
-                last_exception = ex
-                if self.connection is not None:
-                    try:
-                        self.connection.close()
-                    except Exception:
-                        pass
-                    self.connection = None
-                if attempt < max_attempts:
-                    delay = min(2 ** attempt, 30)
-                    self.logger.warning(
-                        "Reconnection attempt %d/%d failed: %s. "
-                        "Retrying in %ds...",
-                        attempt, max_attempts, ex, delay,
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    self.connection = Session.ConnectionHolder.create(
+                        ApResolver.get_random_accesspoint(), self.__inner.conf)
+                    self.connect()
+                    self.__authenticate_partial(
+                        Authentication.LoginCredentials(
+                            typ=self.__ap_welcome.reusable_auth_credentials_type,
+                            username=self.__ap_welcome.canonical_username,
+                            auth_data=self.__ap_welcome.reusable_auth_credentials,
+                        ),
+                        True,
                     )
-                    time.sleep(delay)
+                    self.logger.info("Re-authenticated as {}!".format(
+                        self.__ap_welcome.canonical_username))
+                    return
+                except Exception as ex:
+                    last_exception = ex
+                    if self.connection is not None:
+                        try:
+                            self.connection.close()
+                        except Exception:
+                            pass
+                        self.connection = None
+                    if attempt < max_attempts:
+                        delay = min(2 ** attempt, 30)
+                        self.logger.warning(
+                            "Reconnection attempt %d/%d failed: %s. "
+                            "Retrying in %ds...",
+                            attempt, max_attempts, ex, delay,
+                        )
+                        time.sleep(delay)
 
-        self.logger.fatal(
-            "Failed to reconnect after %d attempts: %s",
-            max_attempts, last_exception,
-        )
-        if last_exception is not None:
-            raise last_exception
-        raise RuntimeError("Failed to reconnect")
+            self.logger.fatal(
+                "Failed to reconnect after %d attempts: %s",
+                max_attempts, last_exception,
+            )
+            if last_exception is not None:
+                raise last_exception
+            raise RuntimeError("Failed to reconnect")
+        finally:
+            self.__reconnect_lock.release()
 
     def reconnecting(self) -> bool:
         """ """
@@ -1425,15 +1463,19 @@ class Session(Closeable, MessageListener, SubListener):
                         "type":
                         reusable_type,
                     }).encode()).decode()
-                with open(self.__inner.conf.stored_credentials_file, "w") as f:
-                    json.dump(
-                        {
-                            "username": self.__ap_welcome.canonical_username,
-                            "credentials": base64.b64encode(reusable).decode(),
-                            "type": reusable_type,
-                        },
-                        f,
-                    )
+                try:
+                    with open(self.__inner.conf.stored_credentials_file, "w") as f:
+                        json.dump(
+                            {
+                                "username": self.__ap_welcome.canonical_username,
+                                "credentials": base64.b64encode(reusable).decode(),
+                                "type": reusable_type,
+                            },
+                            f,
+                        )
+                except OSError as ex:
+                    self.logger.warning(
+                        "Failed to save credentials to file: {}".format(ex))
 
         elif packet.is_cmd(Packet.Type.auth_failure):
             ap_login_failed = Keyexchange.APLoginFailed()
@@ -2148,8 +2190,10 @@ class Session(Closeable, MessageListener, SubListener):
                 packet: Packet
                 cmd: typing.Optional[bytes]
                 try:
-                    assert self.__session.cipher_pair is not None
-                    assert self.__session.connection is not None
+                    if self.__session.cipher_pair is None:
+                        raise ConnectionError("cipher_pair is None")
+                    if self.__session.connection is None:
+                        raise ConnectionError("connection is None")
                     packet = self.__session.cipher_pair.receive_encoded(
                         self.__session.connection)
                     cmd = Packet.Type.parse(packet.cmd)
