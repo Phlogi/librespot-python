@@ -217,7 +217,7 @@ class ShowId(SpotifyId):
     __hex_id: str
 
     def __init__(self, hex_id: str):
-        self.__hex_id = hex_id
+        self.__hex_id = hex_id.lower()
 
     @staticmethod
     def from_uri(uri: str) -> ShowId:
