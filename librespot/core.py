@@ -582,8 +582,9 @@ class DealerClient(Closeable):
                     def anonymous(_listener=_listener):
                         """ """
                         result = _listener.on_request(mid, pid, sender, command)
-                        if self.__connection is not None:
-                            self.__connection.send_reply(key, result)
+                        conn = self.__connection
+                        if conn is not None:
+                            conn.send_reply(key, result)
                         self.logger.warning(
                             "Handled request. [key: {}, result: {}]".format(
                                 key, result))
