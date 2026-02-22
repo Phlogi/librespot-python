@@ -821,7 +821,28 @@ class PlayableContentFeeder:
                 track_id_or_track)
             track = self.pick_alternative_if_necessary(original)
             if track is None:
-                raise RuntimeError("Cannot get alternative track")
+                track_uri = track_id_or_track.to_spotify_uri()
+                track_name = original.name or "unknown"
+                restrictions = []
+                for r in original.restriction:
+                    catalogue_strs = list(r.catalogue_str) or [
+                        Metadata.Restriction.Catalogue.Name(c)
+                        for c in r.catalogue
+                    ]
+                    restrictions.append(
+                        "catalogue={}, countries_allowed={}, "
+                        "countries_forbidden={}".format(
+                            catalogue_strs,
+                            r.countries_allowed or "(empty)",
+                            r.countries_forbidden or "(empty)"))
+                self.logger.error(
+                    "Track unavailable: {} ({}), "
+                    "alternatives={}, restrictions=[{}]".format(
+                        track_uri, track_name, len(original.alternative),
+                        "; ".join(restrictions) if restrictions else "none"))
+                raise FeederException(
+                    "Track unavailable: {} ({})".format(
+                        track_uri, track_name))
         else:
             track = track_id_or_track
         file = audio_quality_picker.get_file(track.file)
@@ -836,6 +857,9 @@ class PlayableContentFeeder:
             self, track: Metadata.Track) -> typing.Union[Metadata.Track, None]:
         if len(track.file) > 0:
             return track
+        self.logger.debug(
+            "Track '{}' has no files, checking {} alternative(s)".format(
+                track.name, len(track.alternative)))
         for alt in track.alternative:
             if len(alt.file) > 0:
                 return Metadata.Track(
