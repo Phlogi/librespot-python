@@ -63,6 +63,9 @@ class MercuryClient(Closeable, PacketsReceiver):
         self.__callbacks.clear()
 
     def dispatch(self, packet: Packet) -> None:
+        # NOTE: This method must only be called from the single Session.Receiver
+        # thread. __partials is not protected by a lock and concurrent calls
+        # would corrupt its state.
         payload = io.BytesIO(packet.payload)
         seq_length = struct.unpack(">H", payload.read(2))[0]
         if seq_length == 2:
