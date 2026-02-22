@@ -4,6 +4,7 @@ from librespot import util
 import io
 import re
 import struct
+import threading
 import typing
 
 if typing.TYPE_CHECKING:
@@ -19,6 +20,7 @@ class CipherPair:
     def __init__(self, send_key: bytes, receive_key: bytes):
         self.__send_nonce = 0
         self.__receive_nonce = 0
+        self.__send_lock = threading.Lock()
         self.__send_cipher = Shannon()
         self.__send_cipher.key(send_key)
         self.__receive_cipher = Shannon()
@@ -33,18 +35,19 @@ class CipherPair:
         :param payload:
         :return:
         """
-        self.__send_cipher.nonce(self.__send_nonce)
-        self.__send_nonce = (self.__send_nonce + 1) & 0xFFFFFFFF
-        buffer = io.BytesIO()
-        buffer.write(cmd)
-        buffer.write(struct.pack(">H", len(payload)))
-        buffer.write(payload)
-        buffer.seek(0)
-        contents = self.__send_cipher.encrypt(buffer.read())
-        mac = self.__send_cipher.finish(4)
-        connection.write(contents)
-        connection.write(mac)
-        connection.flush()
+        with self.__send_lock:
+            self.__send_cipher.nonce(self.__send_nonce)
+            self.__send_nonce = (self.__send_nonce + 1) & 0xFFFFFFFF
+            buffer = io.BytesIO()
+            buffer.write(cmd)
+            buffer.write(struct.pack(">H", len(payload)))
+            buffer.write(payload)
+            buffer.seek(0)
+            contents = self.__send_cipher.encrypt(buffer.read())
+            mac = self.__send_cipher.finish(4)
+            connection.write(contents)
+            connection.write(mac)
+            connection.flush()
 
     def receive_encoded(self, connection: Session.ConnectionHolder) -> Packet:
         """
@@ -407,6 +410,6 @@ class Shannon:
                 i += 4
             else:
                 for j in range(n):
-                    buffer[i + j] = (self.sbuf >> (i * 8)) & 0xff
+                    buffer[i + j] = (self.sbuf >> (j * 8)) & 0xff
                 break
         return bytes(buffer)
