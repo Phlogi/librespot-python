@@ -1,0 +1,14 @@
+[project]
+name = "librespot"
+version = "0.0.10"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+markers = [
+    "premium: requires Spotify Premium",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
