@@ -100,8 +100,9 @@ class ChannelManager(Closeable, PacketsReceiver):
             self.channel_manager.executor_service.submit(
                 lambda: ChannelManager.Channel.Handler(self).run())
 
-        def _handle(self, payload: typing.Any) -> bool:
-            if len(payload) == 0:
+        def _handle(self, payload: io.BytesIO) -> bool:
+            remaining = payload.getbuffer().nbytes - payload.tell()
+            if remaining == 0:
                 if not self.__header:
                     self.__file.write_chunk(payload, self.__chunk_index, False)
                     return True
@@ -110,17 +111,18 @@ class ChannelManager(Closeable, PacketsReceiver):
                 return False
             if self.__header:
                 length: int
-                while len(payload.buffer) > 0:
-                    length = payload.read_short()
+                while payload.getbuffer().nbytes - payload.tell() > 0:
+                    length = struct.unpack(">H", payload.read(2))[0]
                     if not length > 0:
                         break
-                    header_id = payload.read_byte()
+                    header_id = payload.read(1)
                     header_data = payload.read(length - 1)
                     self.__file.write_header(int.from_bytes(header_id, "big"),
                                              bytearray(header_data), False)
                 self.__header = False
             else:
-                self.__buffer.write(payload.read(len(payload.buffer)))
+                rest = payload.read()
+                self.__buffer.write(rest)
             return False
 
         def add_to_queue(self, payload):
