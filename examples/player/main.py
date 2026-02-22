@@ -8,7 +8,7 @@ import requests
 from requests.structures import CaseInsensitiveDict
 
 from librespot.audio.decoders import AudioQuality, VorbisOnlyAudioQuality
-from librespot.core import Session
+from librespot.session import Session
 from librespot.metadata import TrackId
 
 import typing
