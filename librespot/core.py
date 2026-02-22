@@ -819,6 +819,7 @@ class EventService(Closeable):
         """
         event = EventService.EventBuilder(EventService.Type.LANGUAGE)
         event.append(s=lang)
+        self.send_event(event)
 
     def close(self):
         """ """
