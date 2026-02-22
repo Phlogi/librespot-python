@@ -35,7 +35,7 @@ class OAuth:
         self.__success_page_content = content
         return self
 
-    def __generate_generate_code_verifier(self):
+    def __generate_code_verifier(self):
         possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
         verifier = ""
         for i in range(128):
@@ -47,7 +47,7 @@ class OAuth:
         return base64.urlsafe_b64encode(digest).decode('utf-8').rstrip('=')
 
     def get_auth_url(self):
-        self.__code_verifier = self.__generate_generate_code_verifier()
+        self.__code_verifier = self.__generate_code_verifier()
         self.__oauth_state = secrets.token_urlsafe(32)
         auth_url = self.__spotify_auth % (self.__client_id, self.__redirect_url, self.__generate_code_challenge(self.__code_verifier), "+".join(self.__scopes), self.__oauth_state)
         if self.__oauth_url_callback:
@@ -75,7 +75,7 @@ class OAuth:
 
     def get_credentials(self):
         if not self.__token:
-            raise RuntimeError("You need to request a token bore!")
+            raise RuntimeError("You need to request a token before!")
         return Authentication.LoginCredentials(
             typ=Authentication.AuthenticationType.AUTHENTICATION_SPOTIFY_TOKEN,
             auth_data=self.__token.encode("utf-8")
@@ -146,6 +146,7 @@ class OAuth:
         )
         logging.info("OAuth: Waiting for callback on %s:%s", url.hostname, url.port)
         self.__start_server()
+        self._close()
 
     def flow(self):
         logging.info("OAuth: Visit in your browser and log in: %s ", self.get_auth_url())
@@ -153,7 +154,8 @@ class OAuth:
         self.request_token()
         return self.get_credentials()
 
-    def __close(self):
+    def _close(self):
         if self.__server:
             self.__server.shutdown()
+            self.__server = None
 
