@@ -10,7 +10,6 @@ import json
 import logging
 import os
 import random
-import sched
 import socket
 import struct
 import threading
@@ -366,10 +365,9 @@ class ApResolver:
         response = requests.get("{}?type={}".format(ApResolver.base_url,
                                                     service_type))
         if response.status_code != 200:
-            if response.status_code == 502:
-                raise RuntimeError(
-                    f"ApResolve request failed with the following return value: {response.content}. Servers might be down!"
-                )
+            raise RuntimeError(
+                f"ApResolve request failed with status {response.status_code}: {response.content}"
+            )
         return response.json()
 
     @staticmethod
@@ -421,17 +419,22 @@ class DealerClient(Closeable):
     """ """
     logger = logging.getLogger("Librespot:DealerClient")
     __connection: typing.Union[ConnectionHolder, None]
-    __last_scheduled_reconnection: typing.Union[sched.Event, None]
-    __message_listeners: typing.Dict[MessageListener, typing.List[str]] = {}
-    __message_listeners_lock = threading.Condition()
-    __request_listeners: typing.Dict[str, RequestListener] = {}
-    __request_listeners_lock = threading.Condition()
-    __scheduler = sched.scheduler()
+    __last_scheduled_reconnection: typing.Union[threading.Timer, None]
+    __message_listeners: typing.Dict[MessageListener, typing.List[str]]
+    __message_listeners_lock: threading.Condition
+    __request_listeners: typing.Dict[str, RequestListener]
+    __request_listeners_lock: threading.Condition
     __session: Session
-    __worker = concurrent.futures.ThreadPoolExecutor()
+    __worker: concurrent.futures.ThreadPoolExecutor
 
     def __init__(self, session: Session):
         self.__session = session
+        self.__last_scheduled_reconnection = None
+        self.__message_listeners = {}
+        self.__message_listeners_lock = threading.Condition()
+        self.__request_listeners = {}
+        self.__request_listeners_lock = threading.Condition()
+        self.__worker = concurrent.futures.ThreadPoolExecutor()
 
     def add_message_listener(self, listener: MessageListener,
                              uris: list[str]) -> None:
@@ -487,8 +490,9 @@ class DealerClient(Closeable):
             self.__last_scheduled_reconnection = None
             self.connect()
 
-        self.__last_scheduled_reconnection = self.__scheduler.enter(
-            10, 1, anonymous)
+        self.__last_scheduled_reconnection = threading.Timer(10, anonymous)
+        self.__last_scheduled_reconnection.daemon = True
+        self.__last_scheduled_reconnection.start()
 
     def handle_message(self, obj: typing.Any) -> None:
         """
@@ -522,9 +526,9 @@ class DealerClient(Closeable):
                     if uri.startswith(key) and not dispatched:
                         interesting = True
 
-                        def anonymous():
+                        def anonymous(l=listener, u=uri, h=headers, p=decoded_payloads):
                             """ """
-                            listener.on_message(uri, headers, decoded_payloads)
+                            l.on_message(u, h, p)
 
                         self.__worker.submit(anonymous)
                         dispatched = True
@@ -611,17 +615,19 @@ class DealerClient(Closeable):
 
     class ConnectionHolder(Closeable):
         """ """
-        __closed = False
+        __closed: bool
         __dealer_client: DealerClient
-        __last_scheduled_ping: sched.Event
-        __received_pong = False
-        __scheduler = sched.scheduler()
+        __last_scheduled_ping: typing.Union[threading.Timer, None]
+        __received_pong: bool
         __session: Session
         __url: str
         __ws: websocket.WebSocketApp
 
         def __init__(self, session: Session, dealer_client: DealerClient,
                      url: str):
+            self.__closed = False
+            self.__received_pong = False
+            self.__last_scheduled_ping = None
             self.__session = session
             self.__dealer_client = dealer_client
             self.__url = url
@@ -633,7 +639,7 @@ class DealerClient(Closeable):
                 self.__ws.close()
                 self.__closed = True
             if self.__last_scheduled_ping is not None:
-                self.__scheduler.cancel(self.__last_scheduled_ping)
+                self.__last_scheduled_ping.cancel()
 
         def on_failure(self, ws: websocket.WebSocketApp, error):
             """
@@ -647,6 +653,7 @@ class DealerClient(Closeable):
             self.__dealer_client.logger.warning(
                 "An exception occurred. Reconnecting...")
             self.close()
+            self.__dealer_client.connection_invalided()
 
         def on_message(self, ws: websocket.WebSocketApp, text: str):
             """
@@ -700,12 +707,16 @@ class DealerClient(Closeable):
                         return
                     self.__received_pong = False
 
-                self.__scheduler.enter(3, 1, anonymous2)
-                self.__last_scheduled_ping = self.__scheduler.enter(
-                    30, 1, anonymous)
+                pong_timer = threading.Timer(3, anonymous2)
+                pong_timer.daemon = True
+                pong_timer.start()
+                self.__last_scheduled_ping = threading.Timer(30, anonymous)
+                self.__last_scheduled_ping.daemon = True
+                self.__last_scheduled_ping.start()
 
-            self.__last_scheduled_ping = self.__scheduler.enter(
-                30, 1, anonymous)
+            self.__last_scheduled_ping = threading.Timer(30, anonymous)
+            self.__last_scheduled_ping.daemon = True
+            self.__last_scheduled_ping.start()
 
         def send_ping(self):
             """ """
@@ -718,11 +729,8 @@ class DealerClient(Closeable):
             :param result: DealerClient.RequestResult:
 
             """
-            success = ("true" if result == DealerClient.RequestResult.SUCCESS
-                       else "false")
             self.__ws.send(
-                '{"type":"reply","key":"%s","payload":{"success":%s}' %
-                (key, success))
+                json.dumps({"type": "reply", "key": key, "payload": {"success": result == DealerClient.RequestResult.SUCCESS}}))
 
     class RequestResult(enum.Enum):
         """ """
@@ -892,19 +900,18 @@ class Session(Closeable, MessageListener, SubListener):
     country_code: str = "EN"
     connection: typing.Union[ConnectionHolder, None]
     logger = logging.getLogger("Librespot:Session")
-    scheduled_reconnect: typing.Union[sched.Event, None] = None
-    scheduler = sched.scheduler(time.time)
+    scheduled_reconnect: typing.Union[threading.Timer, None]
     __api: ApiClient
     __ap_welcome: Authentication.APWelcome
     __audio_key_manager: typing.Union[AudioKeyManager, None] = None
-    __auth_lock = threading.Condition()
-    __auth_lock_bool = False
+    __auth_lock: threading.Condition
+    __auth_lock_bool: bool
     __cache_manager: typing.Union[CacheManager, None]
     __cdn_manager: typing.Union[CdnManager, None]
     __channel_manager: typing.Union[ChannelManager, None] = None
     __client: typing.Union[requests.Session, None]
-    __closed = False
-    __closing = False
+    __closed: bool
+    __closing: bool
     __content_feeder: typing.Union[PlayableContentFeeder, None]
     __dealer_client: typing.Union[DealerClient, None] = None
     __event_service: typing.Union[EventService, None] = None
@@ -927,12 +934,19 @@ class Session(Closeable, MessageListener, SubListener):
                     b"\x9dH%\xf8\xb3\x9d\xd0\xe8j\xf9HM\xa1\xc2\xba\x860B\xea"
                     b"\x9d\xb3\x08l\x19\x0eH\xb3\x9df\xeb\x00\x06\xa2Z\xee\xa1"
                     b"\x1b\x13\x87<\xd7\x19\xe6U\xbd")
-    __stored_str: str = ""
+    __stored_str: str
     __token_provider: typing.Union[TokenProvider, None]
-    __user_attributes = {}
+    __user_attributes: typing.Dict[str, str]
 
     def __init__(self, inner: Inner, address: str) -> None:
         assert inner.conf is not None, "Configuration not set"
+        self.scheduled_reconnect = None
+        self.__auth_lock = threading.Condition()
+        self.__auth_lock_bool = False
+        self.__closed = False
+        self.__closing = False
+        self.__stored_str = ""
+        self.__user_attributes = {}
         self.__client = Session.create_client(inner.conf)
         self.connection = Session.ConnectionHolder.create(address, None)
         self.__inner = inner
@@ -1047,6 +1061,7 @@ class Session(Closeable, MessageListener, SubListener):
             self.__ap_welcome = None
             self.cipher_pair = None
             self.__closed = True
+            self.__auth_lock.notify_all()
         self.logger.info("Closed session. device_id: {}".format(
             self.__inner.device_id))
 
@@ -1480,7 +1495,7 @@ class Session(Closeable, MessageListener, SubListener):
             :param device_id: str:
 
             """
-            if self.device_id is not None and len(device_id) != 40:
+            if len(device_id) != 40:
                 raise TypeError("Device ID must be 40 chars long.")
             self.device_id = device_id
             return self
@@ -2001,12 +2016,9 @@ class Session(Closeable, MessageListener, SubListener):
 
         def flush(self) -> None:
             """Flush data to socket"""
-            try:
-                self.__buffer.seek(0)
-                self.__socket.send(self.__buffer.read())
-                self.__buffer = io.BytesIO()
-            except BrokenPipeError:
-                pass
+            self.__buffer.seek(0)
+            self.__socket.sendall(self.__buffer.read())
+            self.__buffer = io.BytesIO()
 
         def read(self, length: int) -> bytes:
             """Read exactly *length* bytes from the socket.
@@ -2154,8 +2166,7 @@ class Session(Closeable, MessageListener, SubListener):
                     break
                 if cmd == Packet.Type.ping:
                     if self.__session.scheduled_reconnect is not None:
-                        self.__session.scheduler.cancel(
-                            self.__session.scheduled_reconnect)
+                        self.__session.scheduled_reconnect.cancel()
 
                     def anonymous():
                         """ """
@@ -2163,8 +2174,10 @@ class Session(Closeable, MessageListener, SubListener):
                             "Socket timed out. Reconnecting...")
                         self.__session.reconnect()
 
-                    self.__session.scheduled_reconnect = self.__session.scheduler.enter(
-                        2 * 60 + 5, 1, anonymous)
+                    self.__session.scheduled_reconnect = threading.Timer(
+                        2 * 60 + 5, anonymous)
+                    self.__session.scheduled_reconnect.daemon = True
+                    self.__session.scheduled_reconnect.start()
                     self.__session.send(Packet.Type.pong, packet.payload)
                 elif cmd == Packet.Type.pong_ack:
                     continue
@@ -2360,10 +2373,11 @@ class TokenProvider:
     logger = logging.getLogger("Librespot:TokenProvider")
     token_expire_threshold = 10
     __session: Session
-    __tokens: typing.List[StoredToken] = []
+    __tokens: typing.List[StoredToken]
 
     def __init__(self, session: Session):
         self.__session = session
+        self.__tokens = []
 
     def find_token_with_all_scopes(
             self, scopes: typing.List[str]) -> typing.Union[StoredToken, None]:

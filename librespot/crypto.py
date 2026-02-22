@@ -12,11 +12,13 @@ if typing.TYPE_CHECKING:
 
 class CipherPair:
     __receive_cipher: Shannon
-    __receive_nonce = 0
+    __receive_nonce: int
     __send_cipher: Shannon
-    __send_nonce = 0
+    __send_nonce: int
 
     def __init__(self, send_key: bytes, receive_key: bytes):
+        self.__send_nonce = 0
+        self.__receive_nonce = 0
         self.__send_cipher = Shannon()
         self.__send_cipher.key(send_key)
         self.__receive_cipher = Shannon()
@@ -32,7 +34,7 @@ class CipherPair:
         :return:
         """
         self.__send_cipher.nonce(self.__send_nonce)
-        self.__send_nonce += 1
+        self.__send_nonce = (self.__send_nonce + 1) & 0xFFFFFFFF
         buffer = io.BytesIO()
         buffer.write(cmd)
         buffer.write(struct.pack(">H", len(payload)))
@@ -54,7 +56,7 @@ class CipherPair:
         """
         try:
             self.__receive_cipher.nonce(self.__receive_nonce)
-            self.__receive_nonce += 1
+            self.__receive_nonce = (self.__receive_nonce + 1) & 0xFFFFFFFF
             header_bytes = self.__receive_cipher.decrypt(connection.read(3))
             cmd = struct.pack(">s", bytes([header_bytes[0]]))
             payload_length = (header_bytes[1] << 8) | (header_bytes[2] & 0xff)

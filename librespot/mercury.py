@@ -26,24 +26,31 @@ class JsonMercuryRequest:
 class MercuryClient(Closeable, PacketsReceiver):
     logger = logging.getLogger("Librespot:MercuryClient")
     mercury_request_timeout = 3
-    __callbacks: typing.Dict[int, Callback] = {}
-    __remove_callback_lock = threading.Condition()
-    __partials: typing.Dict[int, typing.List[bytes]] = {}
-    __seq_holder = 0
-    __seq_holder_lock = threading.Condition()
+    __callbacks: typing.Dict[int, Callback]
+    __remove_callback_lock: threading.Condition
+    __partials: typing.Dict[int, typing.List[bytes]]
+    __seq_holder: int
+    __seq_holder_lock: threading.Condition
     __session: Session
-    __subscriptions: typing.List[InternalSubListener] = []
-    __subscriptions_lock = threading.Condition()
+    __subscriptions: typing.List[InternalSubListener]
+    __subscriptions_lock: threading.Condition
 
     def __init__(self, session: Session):
         self.__session = session
+        self.__callbacks = {}
+        self.__remove_callback_lock = threading.Condition()
+        self.__partials = {}
+        self.__seq_holder = 0
+        self.__seq_holder_lock = threading.Condition()
+        self.__subscriptions = []
+        self.__subscriptions_lock = threading.Condition()
 
     def close(self) -> None:
         """
         Close the MercuryClient instance
         """
         if len(self.__subscriptions) != 0:
-            for listener in self.__subscriptions:
+            for listener in list(self.__subscriptions):
                 if listener.is_sub:
                     self.unsubscribe(listener.uri)
                 else:
@@ -98,9 +105,8 @@ class MercuryClient(Closeable, PacketsReceiver):
                             response.payload))
         elif (packet.is_cmd(Packet.Type.mercury_req)
               or packet.is_cmd(Packet.Type.mercury_sub)
-              or packet.is_cmd(Packet.Type.mercury_sub)):
-            callback = self.__callbacks.get(seq)
-            self.__callbacks.pop(seq)
+              or packet.is_cmd(Packet.Type.mercury_unsub)):
+            callback = self.__callbacks.pop(seq, None)
             if callback is not None:
                 callback.response(response)
             else:
@@ -275,7 +281,10 @@ class MercuryClient(Closeable, PacketsReceiver):
             self.payload = b"".join(payload[1:])
 
     class SyncCallback(Callback):
-        __reference = queue.Queue()
+        __reference: queue.Queue
+
+        def __init__(self):
+            self.__reference = queue.Queue()
 
         def response(self, response: MercuryClient.Response) -> None:
             """

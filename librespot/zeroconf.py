@@ -25,8 +25,8 @@ import zeroconf
 class ZeroconfServer(Closeable):
     logger = logging.getLogger("Librespot:ZeroconfServer")
     service = "_spotify-connect._tcp.local."
-    __connecting_username: typing.Union[str, None] = None
-    __connection_lock = threading.Condition()
+    __connecting_username: typing.Union[str, None]
+    __connection_lock: threading.Condition
     __default_get_info_fields = {
         "status": 101,
         "statusString": "OK",
@@ -54,11 +54,15 @@ class ZeroconfServer(Closeable):
     __min_port = 1024
     __runner: HttpRunner
     __service_info: zeroconf.ServiceInfo
-    __session: typing.Union[Session, None] = None
-    __session_listeners: typing.List[SessionListener] = []
+    __session: typing.Union[Session, None]
+    __session_listeners: typing.List[SessionListener]
     __zeroconf: zeroconf.Zeroconf
 
     def __init__(self, inner: Inner, listen_port):
+        self.__connecting_username = None
+        self.__connection_lock = threading.Condition()
+        self.__session = None
+        self.__session_listeners = []
         self.__inner = inner
         self.__keys = DiffieHellman()
         if listen_port == -1:
@@ -103,6 +107,8 @@ class ZeroconfServer(Closeable):
 
     def get_useful_hostname(self) -> str:
         host = socket.gethostname()
+        if host == "localhost":
+            return socket.getfqdn() or "127.0.0.1"
         return host
 
     def handle_add_user(self, __socket: socket.socket, params: dict[str, str],
@@ -242,12 +248,14 @@ class ZeroconfServer(Closeable):
                                      self.conf), self.listen_port)
 
     class HttpRunner(Closeable, Runnable):
-        __should_stop = False
+        __should_stop: bool
         __socket: socket.socket
-        __worker = concurrent.futures.ThreadPoolExecutor()
+        __worker: concurrent.futures.ThreadPoolExecutor
         __zeroconf_server: ZeroconfServer
 
         def __init__(self, zeroconf_server: ZeroconfServer, port: int):
+            self.__should_stop = False
+            self.__worker = concurrent.futures.ThreadPoolExecutor()
             self.__socket = socket.socket()
             self.__socket.bind((".".join(["0"] * 4), port))
             self.__socket.listen(5)
@@ -257,15 +265,20 @@ class ZeroconfServer(Closeable):
                     port))
 
         def close(self) -> None:
-            pass
+            self.__should_stop = True
+            self.__socket.close()
+            self.__worker.shutdown(wait=False)
 
         def run(self):
             while not self.__should_stop:
-                __socket, address = self.__socket.accept()
+                try:
+                    __socket, address = self.__socket.accept()
+                except OSError:
+                    break
 
-                def anonymous():
-                    self.__handle(__socket)
-                    __socket.close()
+                def anonymous(sock=__socket):
+                    self.__handle(sock)
+                    sock.close()
 
                 self.__worker.submit(anonymous)
 
@@ -283,7 +296,7 @@ class ZeroconfServer(Closeable):
                 header = request.readline().strip()
                 if not header:
                     break
-                split = header.split(b":")
+                split = header.split(b":", 1)
                 headers[split[0].decode()] = split[1].strip().decode()
             if not self.__zeroconf_server.has_valid_session():
                 self.__zeroconf_server.logger.debug(

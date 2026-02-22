@@ -26,21 +26,28 @@ if typing.TYPE_CHECKING:
 
 
 class AbsChunkedInputStream(io.BytesIO, HaltListener):
-    chunk_exception = None
-    _closed = False
+    chunk_exception: typing.Optional[Exception]
+    _closed: bool
     max_chunk_tries = 128
     preload_ahead = 3
     preload_chunk_retries = 2
     retries: typing.List[int]
     retry_on_chunk_error: bool
-    wait_lock: threading.Condition = threading.Condition()
-    wait_for_chunk = -1
-    __decoded_length = 0
-    __mark = 0
-    __pos = 0
+    wait_lock: threading.Condition
+    wait_for_chunk: int
+    __decoded_length: int
+    __mark: int
+    __pos: int
 
     def __init__(self, retry_on_chunk_error: bool):
         super().__init__()
+        self.chunk_exception = None
+        self._closed = False
+        self.wait_lock = threading.Condition()
+        self.wait_for_chunk = -1
+        self.__decoded_length = 0
+        self.__mark = 0
+        self.__pos = 0
         self.retries = [0] * self.chunks()
         self.retry_on_chunk_error = retry_on_chunk_error
 
@@ -126,10 +133,10 @@ class AbsChunkedInputStream(io.BytesIO, HaltListener):
             self.requested_chunks()[chunk] = True
         for i in range(chunk + 1,
                        min(self.chunks() - 1, chunk + self.preload_ahead) + 1):
-            if (self.requested_chunks()[i]
+            if (not self.requested_chunks()[i]
                     and self.retries[i] < self.preload_chunk_retries):
                 self.request_chunk_from_stream(i)
-                self.requested_chunks()[chunk] = True
+                self.requested_chunks()[i] = True
         if wait:
             if self.available_chunks()[chunk]:
                 return
@@ -232,14 +239,17 @@ class AbsChunkedInputStream(io.BytesIO, HaltListener):
 class AudioKeyManager(PacketsReceiver, Closeable):
     audio_key_request_timeout = 20
     logger = logging.getLogger("Librespot:AudioKeyManager")
-    __callbacks: typing.Dict[int, Callback] = {}
-    __seq_holder = 0
-    __seq_holder_lock = threading.Condition()
+    __callbacks: typing.Dict[int, Callback]
+    __seq_holder: int
+    __seq_holder_lock: threading.Condition
     __session: Session
     __zero_short = b"\x00\x00"
 
     def __init__(self, session: Session):
         self.__session = session
+        self.__callbacks = {}
+        self.__seq_holder = 0
+        self.__seq_holder_lock = threading.Condition()
 
     def dispatch(self, packet: Packet) -> None:
         payload = io.BytesIO(packet.payload)
@@ -559,7 +569,7 @@ class CdnManager:
         available: typing.List[bool]
         buffer: typing.List[bytes]
         chunks: int
-        executor_service = concurrent.futures.ThreadPoolExecutor()
+        executor_service: concurrent.futures.ThreadPoolExecutor
         halt_listener: typing.Optional[HaltListener]
         requested: typing.List[bool]
         size: int
@@ -580,6 +590,7 @@ class CdnManager:
             self.__audio_decrypt = audio_decrypt
             self.__cdn_url = cdn_url
             self.halt_listener = halt_listener
+            self.executor_service = concurrent.futures.ThreadPoolExecutor()
             response = self.request(range_start=0,
                                     range_end=ChannelManager.chunk_size - 1)
             content_range = response.headers.get("Content-Range")

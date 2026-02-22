@@ -16,16 +16,20 @@ if typing.TYPE_CHECKING:
 
 
 class ChannelManager(Closeable, PacketsReceiver):
-    channels: typing.Dict[int, Channel] = {}
+    channels: typing.Dict[int, Channel]
     chunk_size = 128 * 1024
-    executor_service = concurrent.futures.ThreadPoolExecutor()
+    executor_service: concurrent.futures.ThreadPoolExecutor
     logger = logging.getLogger("Librespot:ChannelManager")
-    seq_holder = 0
-    seq_holder_lock = threading.Condition()
+    seq_holder: int
+    seq_holder_lock: threading.Condition
     __session: Session
 
     def __init__(self, session: Session):
         self.__session = session
+        self.channels = {}
+        self.executor_service = concurrent.futures.ThreadPoolExecutor()
+        self.seq_holder = 0
+        self.seq_holder_lock = threading.Condition()
 
     def request_chunk(self, file_id: bytes, index: int, file: AudioFile):
         start = int(index * self.chunk_size / 4)
@@ -76,15 +80,17 @@ class ChannelManager(Closeable, PacketsReceiver):
     class Channel:
         channel_manager: ChannelManager
         chunk_id: int
-        q = queue.Queue()
+        q: queue.Queue
         __buffer: io.BytesIO
         __chunk_index: int
         __file: AudioFile
-        __header: bool = True
+        __header: bool
 
         def __init__(self, channel_manager: ChannelManager, file: AudioFile,
                      chunk_index: int):
             self.__buffer = io.BytesIO()
+            self.__header = True
+            self.q = queue.Queue()
             self.channel_manager = channel_manager
             self.__file = file
             self.__chunk_index = chunk_index
@@ -92,7 +98,7 @@ class ChannelManager(Closeable, PacketsReceiver):
                 self.chunk_id = self.channel_manager.seq_holder
                 self.channel_manager.seq_holder += 1
             self.channel_manager.executor_service.submit(
-                lambda: ChannelManager.Channel.Handler(self))
+                lambda: ChannelManager.Channel.Handler(self).run())
 
         def _handle(self, payload: typing.Any) -> bool:
             if len(payload) == 0:

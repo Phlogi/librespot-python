@@ -1,6 +1,7 @@
 import base64
 import logging
 import random
+import secrets
 import urllib.parse
 from hashlib import sha256
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -11,10 +12,10 @@ import requests
 
 class OAuth:
     logger = logging.getLogger("Librespot:OAuth")
-    __spotify_auth = "https://accounts.spotify.com/authorize?response_type=code&client_id=%s&redirect_uri=%s&code_challenge=%s&code_challenge_method=S256&scope=%s"
+    __spotify_auth = "https://accounts.spotify.com/authorize?response_type=code&client_id=%s&redirect_uri=%s&code_challenge=%s&code_challenge_method=S256&scope=%s&state=%s"
     __scopes = ["app-remote-control", "playlist-modify", "playlist-modify-private", "playlist-modify-public", "playlist-read", "playlist-read-collaborative", "playlist-read-private", "streaming", "ugc-image-upload", "user-follow-modify", "user-follow-read", "user-library-modify", "user-library-read", "user-modify", "user-modify-playback-state", "user-modify-private", "user-personalized", "user-read-birthdate", "user-read-currently-playing", "user-read-email", "user-read-play-history", "user-read-playback-position", "user-read-playback-state", "user-read-private", "user-read-recently-played", "user-top-read"]
     __spotify_token = "https://accounts.spotify.com/api/token"
-    __spotify_token_data = {"grant_type": "authorization_code", "client_id": "", "redirect_uri": "", "code": "", "code_verifier": ""}
+    __spotify_token_data: dict
     __client_id = ""
     __redirect_url = ""
     __code_verifier = ""
@@ -28,6 +29,7 @@ class OAuth:
         self.__client_id = client_id
         self.__redirect_url = redirect_url
         self.__oauth_url_callback = oauth_url_callback
+        self.__spotify_token_data = {"grant_type": "authorization_code", "client_id": "", "redirect_uri": "", "code": "", "code_verifier": ""}
     
     def set_success_page_content(self, content):
         self.__success_page_content = content
@@ -37,7 +39,7 @@ class OAuth:
         possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
         verifier = ""
         for i in range(128):
-            verifier += possible[random.randint(0, len(possible) - 1)]
+            verifier += secrets.choice(possible)
         return verifier
 
     def __generate_code_challenge(self, code_verifier):
@@ -46,7 +48,8 @@ class OAuth:
 
     def get_auth_url(self):
         self.__code_verifier = self.__generate_generate_code_verifier()
-        auth_url = self.__spotify_auth % (self.__client_id, self.__redirect_url, self.__generate_code_challenge(self.__code_verifier), "+".join(self.__scopes))
+        self.__oauth_state = secrets.token_urlsafe(32)
+        auth_url = self.__spotify_auth % (self.__client_id, self.__redirect_url, self.__generate_code_challenge(self.__code_verifier), "+".join(self.__scopes), self.__oauth_state)
         if self.__oauth_url_callback:
             self.__oauth_url_callback(auth_url)
         return auth_url
@@ -81,10 +84,11 @@ class OAuth:
     class CallbackServer(HTTPServer):
         callback_path = None
 
-        def __init__(self, server_address, RequestHandlerClass, callback_path, set_code, success_page_content):
+        def __init__(self, server_address, RequestHandlerClass, callback_path, set_code, success_page_content, expected_state):
             self.callback_path = callback_path
             self.set_code = set_code
             self.success_page_content = success_page_content
+            self.expected_state = expected_state
             super().__init__(server_address, RequestHandlerClass)
 
     class CallbackRequestHandler(BaseHTTPRequestHandler):
@@ -94,6 +98,14 @@ class OAuth:
             callback_path = self.server.callback_path
             if callback_path is not None and self.path.startswith(callback_path):
                 query = urllib.parse.parse_qs(urlparse(self.path).query)
+                state_list = query.get("state")
+                received_state = state_list[0] if state_list else None
+                if received_state != self.server.expected_state:
+                    self.send_response(403)
+                    self.send_header('Content-type', 'text/html')
+                    self.end_headers()
+                    self.wfile.write(b"Invalid state parameter (CSRF check failed)")
+                    return
                 if "code" not in query:
                     self.send_response(400)
                     self.send_header('Content-type', 'text/html')
@@ -133,6 +145,7 @@ class OAuth:
             url.path,
             self.set_code,
             self.__success_page_content,
+            self.__oauth_state,
         )
         logging.info("OAuth: Waiting for callback on %s:%s", url.hostname, url.port)
         self.__start_server()
