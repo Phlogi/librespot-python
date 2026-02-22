@@ -155,7 +155,7 @@ class AbsChunkedInputStream(io.BytesIO, HaltListener):
                     else:
                         raise AbsChunkedInputStream.ChunkException
                 if not retry:
-                    self.stream_read_halted(chunk, int(time.time() * 1000))
+                    self.stream_read_resumed(chunk, int(time.time() * 1000))
             if retry:
                 time.sleep(math.log10(self.retries[chunk]))
                 self.check_availability(chunk, True, True)
@@ -339,10 +339,17 @@ class CdnFeedHelper:
 
     @staticmethod
     def get_url(resp: StorageResolve.StorageResolveResponse) -> str:
-        selected_url = random.choice(resp.cdnurl)
-        while "audio4-gm-fb" in selected_url or "audio-gm-fb" in selected_url:
-            selected_url = random.choice(resp.cdnurl)
-        return selected_url
+        valid_urls = [
+            url for url in resp.cdnurl
+            if "audio4-gm-fb" not in url and "audio-gm-fb" not in url
+        ]
+        if not valid_urls:
+            CdnFeedHelper._LOGGER.warning(
+                "All CDN URLs contain blacklisted substrings, using first available")
+            valid_urls = list(resp.cdnurl)
+        if not valid_urls:
+            raise RuntimeError("No CDN URLs available")
+        return random.choice(valid_urls)
 
     @staticmethod
     def load_track(
@@ -514,7 +521,7 @@ class CdnManager:
                 return self._url
             if self.__expiration <= int(time.time() * 1000) + 5 * 60 * 1000:
                 if self.__cdn_manager is not None and self.__file_id is not None:
-                    self._url = self.__cdn_manager.get_audio_url(self.__file_id)
+                    self.set_url(self.__cdn_manager.get_audio_url(self.__file_id))
             return self._url
 
         def set_url(self, url: str) -> None:

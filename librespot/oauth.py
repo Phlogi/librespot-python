@@ -128,14 +128,11 @@ class OAuth:
             return
 
     def __start_server(self):
-        if self.__server is None:
-            return
-        try:
-            self.__server.handle_request()
-        except KeyboardInterrupt:
-            return
-        if not self.__code:
-            self.__start_server()
+        while self.__server is not None and not self.__code:
+            try:
+                self.__server.handle_request()
+            except KeyboardInterrupt:
+                return
 
     def run_callback_server(self):
         url = urlparse(self.__redirect_url)

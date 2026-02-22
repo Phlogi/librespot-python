@@ -49,8 +49,10 @@ class MercuryClient(Closeable, PacketsReceiver):
         """
         Close the MercuryClient instance
         """
-        if len(self.__subscriptions) != 0:
-            for listener in list(self.__subscriptions):
+        with self.__subscriptions_lock:
+            listeners_copy = list(self.__subscriptions)
+        if len(listeners_copy) != 0:
+            for listener in listeners_copy:
                 if listener.is_sub:
                     self.unsubscribe(listener.uri)
                 else:
@@ -121,17 +123,19 @@ class MercuryClient(Closeable, PacketsReceiver):
                     seq, header.uri, header.status_code))
 
     def interested_in(self, uri: str, listener: SubListener) -> None:
-        self.__subscriptions.append(
-            MercuryClient.InternalSubListener(uri, listener, False))
+        with self.__subscriptions_lock:
+            self.__subscriptions.append(
+                MercuryClient.InternalSubListener(uri, listener, False))
 
     def not_interested_in(self, listener: SubListener) -> None:
-        try:
-            for subscription in self.__subscriptions:
-                if subscription.listener is listener:
-                    self.__subscriptions.remove(subscription)
-                    break
-        except ValueError:
-            pass
+        with self.__subscriptions_lock:
+            try:
+                for subscription in self.__subscriptions:
+                    if subscription.listener is listener:
+                        self.__subscriptions.remove(subscription)
+                        break
+            except ValueError:
+                pass
 
     def send(self, request: RawMercuryRequest, callback) -> int:
         """
@@ -162,8 +166,8 @@ class MercuryClient(Closeable, PacketsReceiver):
             buffer.write(part)
         buffer.seek(0)
         cmd = Packet.Type.for_method(request.header.method)
-        self.__session.send(cmd, buffer.read())
         self.__callbacks[seq] = callback
+        self.__session.send(cmd, buffer.read())
         return seq
 
     def send_sync(self, request: RawMercuryRequest) -> Response:
@@ -202,15 +206,16 @@ class MercuryClient(Closeable, PacketsReceiver):
         response = self.send_sync(RawMercuryRequest.sub(uri))
         if response.status_code != 200:
             raise RuntimeError(response)
-        if len(response.payload) > 0:
-            for payload in response.payload:
-                sub = Pubsub.Subscription()
-                sub.ParseFromString(payload)
+        with self.__subscriptions_lock:
+            if len(response.payload) > 0:
+                for payload in response.payload:
+                    sub = Pubsub.Subscription()
+                    sub.ParseFromString(payload)
+                    self.__subscriptions.append(
+                        MercuryClient.InternalSubListener(sub.uri, listener, True))
+            else:
                 self.__subscriptions.append(
-                    MercuryClient.InternalSubListener(sub.uri, listener, True))
-        else:
-            self.__subscriptions.append(
-                MercuryClient.InternalSubListener(uri, listener, True))
+                    MercuryClient.InternalSubListener(uri, listener, True))
         self.logger.debug("Subscribed successfully to {}!".format(uri))
 
     def unsubscribe(self, uri) -> None:
@@ -222,10 +227,11 @@ class MercuryClient(Closeable, PacketsReceiver):
         response = self.send_sync(RawMercuryRequest.unsub(uri))
         if response.status_code != 200:
             raise RuntimeError(response)
-        for subscription in self.__subscriptions:
-            if subscription.matches(uri):
-                self.__subscriptions.remove(subscription)
-                break
+        with self.__subscriptions_lock:
+            for subscription in self.__subscriptions:
+                if subscription.matches(uri):
+                    self.__subscriptions.remove(subscription)
+                    break
         self.logger.debug("Unsubscribed successfully from {}!".format(uri))
 
     class Callback:
@@ -293,7 +299,6 @@ class MercuryClient(Closeable, PacketsReceiver):
             :return:
             """
             self.__reference.put(response)
-            self.__reference.task_done()
 
         def wait_response(self) -> typing.Any:
             return self.__reference.get(

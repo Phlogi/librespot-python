@@ -323,6 +323,7 @@ class ApiClient(Closeable):
                 "Accept": "application/x-protobuf",
                 "Content-Encoding": "",
             }),
+            timeout=10,
         )
 
         ApiClient.StatusCodeException.check_status(resp)
@@ -363,7 +364,8 @@ class ApResolver:
 
         """
         response = requests.get("{}?type={}".format(ApResolver.base_url,
-                                                    service_type))
+                                                    service_type),
+                                timeout=10)
         if response.status_code != 200:
             raise RuntimeError(
                 f"ApResolve request failed with status {response.status_code}: {response.content}"
@@ -565,7 +567,7 @@ class DealerClient(Closeable):
 
                     _listener = listener  # bind for closure
 
-                    def anonymous():
+                    def anonymous(_listener=_listener):
                         """ """
                         result = _listener.on_request(mid, pid, sender, command)
                         if self.__connection is not None:
@@ -704,6 +706,7 @@ class DealerClient(Closeable):
                             "Did not receive ping in 3 seconds. Reconnecting..."
                         )
                         self.close()
+                        self.__dealer_client.connection_invalided()
                         return
                     self.__received_pong = False
 
@@ -849,7 +852,7 @@ class EventService(Closeable):
             :param s: str:  (Default value = None)
 
             """
-            if c is None and s is None or c is not None and s is not None:
+            if (c is None and s is None) or (c is not None and s is not None):
                 raise TypeError()
             if c is not None:
                 self.body.write(b"\x09")
@@ -2452,7 +2455,7 @@ class TokenProvider:
                 login5_response.ParseFromString(response.content)
 
                 if login5_response.HasField('ok'):
-                    self.logger.info("Login5 authentication successful, got access token".format(login5_response.ok.access_token))
+                    self.logger.info("Login5 authentication successful, got access token: {}".format(login5_response.ok.access_token))
                     token = TokenProvider.StoredToken({
                         "expiresIn": login5_response.ok.access_token_expires_in, # approximately one hour
                         "accessToken": login5_response.ok.access_token,

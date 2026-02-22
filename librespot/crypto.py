@@ -267,8 +267,6 @@ class Shannon:
 
     def load_key(self, key: bytes) -> None:
         i: int
-        j: int
-        t: int
         padding_size = int((len(key) + 3) / 4) * 4 - len(key)
         key = key + (b"\x00" * padding_size) + struct.pack("<I", len(key))
         for i in range(0, len(key), 4):
