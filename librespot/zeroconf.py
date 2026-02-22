@@ -50,7 +50,7 @@ class ZeroconfServer(Closeable):
         "statusString": "OK",
     }
     __eol = b"\r\n"
-    __max_port = 65536
+    __max_port = 65535
     __min_port = 1024
     __runner: HttpRunner
     __service_info: zeroconf.ServiceInfo
@@ -319,8 +319,8 @@ class ZeroconfServer(Closeable):
                 pairs = body.split("&")
                 for pair in pairs:
                     split = pair.split("=")
-                    params[urllib.parse.unquote(
-                        split[0])] = urllib.parse.unquote(split[1])
+                    params[urllib.parse.unquote_plus(
+                        split[0])] = urllib.parse.unquote_plus(split[1])
             else:
                 params = self.__zeroconf_server.parse_path(path)
             action = params.get("action")
