@@ -5,6 +5,7 @@ import logging
 import random
 import secrets
 import urllib.parse
+import json
 from hashlib import sha256
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
@@ -73,7 +74,16 @@ class OAuth:
         )
         if request.status_code != 200:
             raise RuntimeError("Received status code %d: %s" % (request.status_code, request.reason))
-        self.__token = request.json()["access_token"]
+        try:
+            self.__token = request.json()["access_token"]
+        except (json.JSONDecodeError, KeyError) as ex:
+            self.logger.error(
+                "Token response parse failed (status %d): %s",
+                request.status_code, request.text[:200],
+            )
+            raise RuntimeError(
+                f"Failed to parse token response: {ex}"
+            ) from ex
 
     def get_credentials(self):
         if not self.__token:
