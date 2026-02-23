@@ -60,11 +60,23 @@ class ApResolver:
         :returns: A random ApResolve url will be returned
 
         """
+        pool = ApResolver.get_pool(service_type)
+        return random.choice(pool)
+
+    @staticmethod
+    def get_pool(service_type: str) -> list:
+        """Gets the full shuffled pool of urls for a service type.
+
+        :param service_type: str:
+        :returns: A shuffled list of urls
+
+        """
         pool = ApResolver.request(service_type)
         urls = pool.get(service_type)
         if urls is None or len(urls) == 0:
             raise RuntimeError("No ApResolve url available")
-        return random.choice(urls)
+        random.shuffle(urls)
+        return urls
 
     @staticmethod
     def get_random_dealer() -> str:
@@ -95,3 +107,13 @@ class ApResolver:
 
         """
         return ApResolver.get_random_of("accesspoint")
+
+    @staticmethod
+    def get_accesspoint_pool() -> list:
+        """Get a shuffled list of all accesspoint endpoints.
+
+
+        :returns: shuffled list of accesspoint endpoint urls
+
+        """
+        return ApResolver.get_pool("accesspoint")

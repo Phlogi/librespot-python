@@ -133,7 +133,9 @@ class _ConnectionHolder:
         ap_address = address.split(":")[0]
         ap_port = int(address.split(":")[1])
         sock = socket.socket()
+        sock.settimeout(10)
         sock.connect((ap_address, ap_port))
+        sock.settimeout(None)
         return _ConnectionHolder(sock)
 
     def close(self) -> None:
@@ -733,7 +735,17 @@ class _Builder(_AbsBuilder):
         last_exception: typing.Optional[Exception] = None
         logger = logging.getLogger("Librespot:Session")
 
+        ap_pool = ApResolver.get_accesspoint_pool()
+        ap_index = 0
+
         for attempt in range(1, max_attempts + 1):
+            # Pick the next AP from the pool, re-fetching if exhausted
+            if ap_index >= len(ap_pool):
+                ap_pool = ApResolver.get_accesspoint_pool()
+                ap_index = 0
+            ap_address = ap_pool[ap_index]
+            ap_index += 1
+
             session: typing.Optional[Session] = None
             try:
                 assert self.conf is not None, "Configuration not set"
@@ -745,7 +757,7 @@ class _Builder(_AbsBuilder):
                         self.conf,
                         self.device_id,
                     ),
-                    ApResolver.get_random_accesspoint(),
+                    ap_address,
                 )
                 session.connect()
                 session.authenticate(self.login_credentials)
@@ -1041,7 +1053,7 @@ class Session(Closeable, MessageListener, SubListener):
                 failed = Keyexchange.APResponseMessage()
                 failed.ParseFromString(payload)
                 raise RuntimeError(failed)
-        except socket.timeout:
+        except (socket.timeout, ConnectionError):
             pass
         finally:
             self.connection.set_timeout(0)
