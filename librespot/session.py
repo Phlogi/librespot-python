@@ -159,8 +159,29 @@ class _ConnectionHolder:
         """Return the access point address backing this connection."""
         return self.__address
 
+    def describe(self) -> str:
+        """Return diagnostic information for the socket connection."""
+        parts = [f"ap={self.__address}"]
+        try:
+            parts.append(f"local={self.__socket.getsockname()}")
+        except OSError as ex:
+            parts.append(f"local=<unavailable:{ex}>")
+        try:
+            parts.append(f"peer={self.__socket.getpeername()}")
+        except OSError as ex:
+            parts.append(f"peer=<unavailable:{ex}>")
+        try:
+            parts.append(f"timeout={self.__socket.gettimeout()}")
+        except OSError as ex:
+            parts.append(f"timeout=<unavailable:{ex}>")
+        return ", ".join(parts)
+
     def close(self) -> None:
         """Close the connection"""
+        try:
+            self.__socket.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
         self.__socket.close()
 
     def flush(self) -> None:
@@ -445,8 +466,16 @@ class _Receiver:
                     continue
             except (RuntimeError, ConnectionError) as ex:
                 if self.__running:
+                    connection_context = (
+                        conn.describe()
+                        if conn is not None
+                        else "connection=<none>"
+                    )
                     self.__session.logger.critical(
-                        "Failed reading packet! {}".format(ex))
+                        "Failed reading packet from %s: %s",
+                        connection_context,
+                        ex,
+                    )
                     self.__session.reconnect()
                 break
             if not self.__running:
@@ -1245,16 +1274,33 @@ class Session(Closeable, MessageListener, SubListener):
 
             if self.__receiver is not None:
                 self.__receiver.stop()
+            with self.__auth_lock:
+                self.cipher_pair = None
+                self.__auth_lock_bool = True
             if self.connection is not None:
                 self.connection.close()
+                self.connection = None
 
             max_attempts = int(os.getenv(_RETRY_ATTEMPTS_ENV, str(_DEFAULT_RETRY_ATTEMPTS)))
             last_exception: typing.Optional[Exception] = None
+            ap_pool: list[str] = []
+            ap_index = 0
 
             for attempt in range(1, max_attempts + 1):
                 try:
+                    if ap_index >= len(ap_pool):
+                        ap_pool = ApResolver.get_accesspoint_pool()
+                        ap_index = 0
+                    ap_address = ap_pool[ap_index]
+                    ap_index += 1
+                    self.logger.info(
+                        "Reconnection attempt %d/%d using access point %s",
+                        attempt,
+                        max_attempts,
+                        ap_address,
+                    )
                     self.connection = _ConnectionHolder.create(
-                        ApResolver.get_random_accesspoint(), self.__inner.conf)
+                        ap_address, self.__inner.conf)
                     self.connect()
                     self.__authenticate_partial(
                         _protobuf_message(
@@ -1294,6 +1340,10 @@ class Session(Closeable, MessageListener, SubListener):
             raise RuntimeError("Failed to reconnect")
         finally:
             self.__reconnect_lock.release()
+            if self.connection is None:
+                with self.__auth_lock:
+                    self.__auth_lock_bool = False
+                    self.__auth_lock.notify_all()
 
     def reconnecting(self) -> bool:
         """ """
@@ -1322,6 +1372,8 @@ class Session(Closeable, MessageListener, SubListener):
             raise RuntimeError("Session is closed!")
         with self.__auth_lock:
             while self.cipher_pair is None or self.__auth_lock_bool:
+                if self.connection is None and not self.__reconnect_lock.locked():
+                    raise RuntimeError("Session is disconnected")
                 self.__auth_lock.wait()
             self.__send_unchecked(cmd, payload)
 
@@ -1438,4 +1490,6 @@ class Session(Closeable, MessageListener, SubListener):
             raise RuntimeError("Session is closed!")
         with self.__auth_lock:
             while self.cipher_pair is None or self.__auth_lock_bool:
+                if self.connection is None and not self.__reconnect_lock.locked():
+                    raise RuntimeError("Session is disconnected")
                 self.__auth_lock.wait()
