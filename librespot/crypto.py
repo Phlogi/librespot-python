@@ -57,8 +57,9 @@ class CipherPair:
         Return:
             The parsed packet will be returned
         """
+        receive_nonce = self.__receive_nonce
         try:
-            self.__receive_cipher.nonce(self.__receive_nonce)
+            self.__receive_cipher.nonce(receive_nonce)
             self.__receive_nonce = (self.__receive_nonce + 1) & 0xFFFFFFFF
             header_bytes = self.__receive_cipher.decrypt(connection.read(3))
             cmd = struct.pack(">s", bytes([header_bytes[0]]))
@@ -68,10 +69,21 @@ class CipherPair:
             mac = connection.read(4)
             expected_mac = self.__receive_cipher.finish(4)
             if mac != expected_mac:
-                raise RuntimeError()
+                raise RuntimeError(
+                    "Packet MAC mismatch at receive nonce {}: cmd=0x{}, "
+                    "payload_length={}".format(
+                        receive_nonce,
+                        util.bytes_to_hex(cmd),
+                        payload_length,
+                    ))
             return Packet(cmd, payload_bytes)
-        except (IndexError, OSError):
-            raise RuntimeError("Failed to receive packet")
+        except (IndexError, OSError) as ex:
+            raise RuntimeError(
+                "Failed to receive packet at receive nonce {}: {}: {}".format(
+                    receive_nonce,
+                    type(ex).__name__,
+                    ex,
+                )) from ex
 
 
 class DiffieHellman:
