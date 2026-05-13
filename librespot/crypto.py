@@ -178,6 +178,7 @@ class Packet:
         track_ended_time = b"\x82"
         unknown_data_all_zeros = b"\x1f"
         preferred_locale = b"\x74"
+        preferred_locale_ack = b"\x75"
         unknown_0x4f = b"\x4f"
         unknown_0x0f = b"\x0f"
         unknown_0x10 = b"\x10"

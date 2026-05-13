@@ -459,7 +459,7 @@ class _Receiver:
                 packet = cp.receive_encoded(conn)
                 cmd = Packet.Type.parse(packet.cmd)
                 if cmd is None:
-                    self.__session.logger.info(
+                    self.__session.logger.debug(
                         "Skipping unknown command cmd: 0x{}, payload: {}".
                         format(util.bytes_to_hex(packet.cmd),
                                packet.payload))
@@ -517,6 +517,10 @@ class _Receiver:
             elif cmd == Packet.Type.unknown_0x10:
                 self.__session.logger.debug("Received 0x10: {}".format(
                     util.bytes_to_hex(packet.payload)))
+            elif cmd == Packet.Type.preferred_locale_ack:
+                self.__session.logger.debug(
+                    "Received preferred_locale_ack: {}".format(
+                        util.bytes_to_hex(packet.payload)))
             elif cmd in [
                     Packet.Type.mercury_sub,
                     Packet.Type.mercury_unsub,

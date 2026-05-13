@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from librespot.apresolver import ApResolver
+from librespot.crypto import Packet
 from librespot.session import Session, _ConnectionHolder
 
 
@@ -82,6 +83,10 @@ def test_read_int_raises_connection_error_on_early_eof():
 
     with pytest.raises(ConnectionError, match="expected 4 bytes, got 1"):
         connection.read_int()
+
+
+def test_preferred_locale_ack_packet_is_known():
+    assert Packet.Type.parse(b"\x75") == Packet.Type.preferred_locale_ack
 
 
 def test_reconnect_rotates_access_points_without_replacement(monkeypatch):
