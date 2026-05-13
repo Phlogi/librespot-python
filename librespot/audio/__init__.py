@@ -571,6 +571,7 @@ class CdnManager:
                 self.__expiration = -1
 
     class Streamer(GeneralAudioStream, GeneralWritableStream):
+        logger = logging.getLogger("Librespot:CdnManager:Streamer")
         available: typing.List[bool]
         buffer: typing.List[bytes]
         chunks: int
@@ -685,7 +686,7 @@ class CdnManager:
 
             def close(self) -> None:
                 super().close()
-                self.streamer.buffer = None
+                self.streamer.buffer = typing.cast(typing.List[bytes], None)
 
             def requested_chunks(self) -> typing.List[bool]:
                 return self.streamer.requested

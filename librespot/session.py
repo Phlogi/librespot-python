@@ -61,6 +61,21 @@ _BACKOFF_CAP_SECONDS = 30
 _SESSION_PING_TIMEOUT_SECONDS = 2 * 60 + 5
 
 
+def _protobuf_message(message_class: typing.Any, **fields: typing.Any) -> typing.Any:
+    """Construct a protobuf message whose generated class has no useful stub."""
+    return message_class(**fields)
+
+
+def _protobuf_empty(message_class: typing.Any) -> typing.Any:
+    """Construct an empty protobuf message whose generated class is dynamic."""
+    return message_class()
+
+
+def _protobuf_enum_value(enum_class: typing.Any, name: str) -> int:
+    """Read a protobuf enum value from an enum wrapper."""
+    return getattr(enum_class, name)
+
+
 # ── Promoted from Session nested classes ────────────────────────────────────────
 
 class _Accumulator:
@@ -235,7 +250,7 @@ class _ConnectionHolder:
 
 class _Inner:
     """ """
-    device_type: typing.Optional[Connect.DeviceType] = None
+    device_type: int
     device_name: str
     device_id: str
     conf: typing.Optional[_Configuration] = None
@@ -243,7 +258,7 @@ class _Inner:
 
     def __init__(
         self,
-        device_type: Connect.DeviceType,
+        device_type: int,
         device_name: str,
         preferred_locale: str,
         conf: _Configuration,
@@ -496,7 +511,7 @@ class _Receiver:
 class _SpotifyAuthenticationException(Exception):
     """ """
 
-    def __init__(self, login_failed: Keyexchange.APLoginFailed):
+    def __init__(self, login_failed: typing.Any):
         super().__init__(
             Keyexchange.ErrorCode.Name(login_failed.error_code))
 
@@ -506,7 +521,7 @@ class _AbsBuilder:
     conf: typing.Optional[_Configuration] = None
     device_id: typing.Optional[str] = None
     device_name: str = "librespot-python"
-    device_type = Connect.DeviceType.COMPUTER
+    device_type: int = _protobuf_enum_value(Connect.DeviceType, "COMPUTER")
     preferred_locale: str = "en"
 
     def __init__(self, conf: typing.Optional[_Configuration] = None):
@@ -547,7 +562,7 @@ class _AbsBuilder:
         return self
 
     def set_device_type(
-            self, device_type: Connect.DeviceType) -> _AbsBuilder:
+            self, device_type: int) -> _AbsBuilder:
         """
 
         :param device_type: Connect.DeviceType:
@@ -559,7 +574,7 @@ class _AbsBuilder:
 
 class _Builder(_AbsBuilder):
     """ """
-    login_credentials: typing.Optional[Authentication.LoginCredentials] = None
+    login_credentials: typing.Optional[typing.Any] = None
 
     def blob(self, username: str, blob: bytes) -> _Builder:
         """
@@ -576,7 +591,7 @@ class _Builder(_AbsBuilder):
 
     def decrypt_blob(
             self, device_id: str, username: str,
-            encrypted_blob: bytes) -> Authentication.LoginCredentials:
+            encrypted_blob: bytes) -> typing.Any:
         """
 
         :param device_id: str:
@@ -588,7 +603,7 @@ class _Builder(_AbsBuilder):
         sha1 = SHA1.new()
         sha1.update(device_id.encode())
         secret = sha1.digest()
-        base_key = PBKDF2(secret,
+        base_key = PBKDF2(typing.cast(str, secret),
                           username.encode(),
                           20,
                           0x100,
@@ -615,7 +630,8 @@ class _Builder(_AbsBuilder):
         blob.read(1)
         l = self.read_blob_int(blob)
         auth_data = blob.read(l)
-        return Authentication.LoginCredentials(
+        return _protobuf_message(
+            Authentication.LoginCredentials,
             auth_data=auth_data,
             typ=type_,
             username=username,
@@ -648,7 +664,8 @@ class _Builder(_AbsBuilder):
             pass
         else:
             try:
-                self.login_credentials = Authentication.LoginCredentials(
+                self.login_credentials = _protobuf_message(
+                    Authentication.LoginCredentials,
                     typ=Authentication.AuthenticationType.Value(
                         obj["type"]),
                     username=obj["username"],
@@ -678,7 +695,8 @@ class _Builder(_AbsBuilder):
             else:
                 try:
                     # Try Python librespot format first
-                    self.login_credentials = Authentication.LoginCredentials(
+                    self.login_credentials = _protobuf_message(
+                        Authentication.LoginCredentials,
                         typ=Authentication.AuthenticationType.Value(
                             obj["type"]),
                         username=obj["username"],
@@ -687,7 +705,8 @@ class _Builder(_AbsBuilder):
                 except KeyError:
                     # Try Rust librespot format (auth_type as int, auth_data instead of credentials)
                     try:
-                        self.login_credentials = Authentication.LoginCredentials(
+                        self.login_credentials = _protobuf_message(
+                            Authentication.LoginCredentials,
                             typ=obj["auth_type"],
                             username=obj["username"],
                             auth_data=base64.b64decode(obj["auth_data"]),
@@ -717,9 +736,13 @@ class _Builder(_AbsBuilder):
         :returns: Builder
 
         """
-        self.login_credentials = Authentication.LoginCredentials(
+        self.login_credentials = _protobuf_message(
+            Authentication.LoginCredentials,
             username=username,
-            typ=Authentication.AuthenticationType.AUTHENTICATION_USER_PASS,
+            typ=_protobuf_enum_value(
+                Authentication.AuthenticationType,
+                "AUTHENTICATION_USER_PASS",
+            ),
             auth_data=password.encode(),
         )
         return self
@@ -811,7 +834,7 @@ class Session(Closeable, MessageListener, SubListener):
     logger = logging.getLogger("Librespot:Session")
     scheduled_reconnect: typing.Union[threading.Timer, None]
     __api: ApiClient
-    __ap_welcome: Authentication.APWelcome
+    __ap_welcome: typing.Any
     __audio_key_manager: typing.Union[AudioKeyManager, None] = None
     __auth_lock: threading.Condition
     __auth_lock_bool: bool
@@ -886,7 +909,7 @@ class Session(Closeable, MessageListener, SubListener):
         return self.__audio_key_manager
 
     def authenticate(self,
-                     credential: Authentication.LoginCredentials) -> None:
+                     credential: typing.Any) -> None:
         """Log in to Spotify
 
         :param credential: Spotify account login information
@@ -984,14 +1007,20 @@ class Session(Closeable, MessageListener, SubListener):
         acc = _Accumulator()
         # Send ClientHello
         nonce = Random.get_random_bytes(0x10)
-        client_hello_proto = Keyexchange.ClientHello(
+        client_hello_proto = _protobuf_message(
+            Keyexchange.ClientHello,
             build_info=Version.standard_build_info(),
             client_nonce=nonce,
             cryptosuites_supported=[
-                Keyexchange.Cryptosuite.CRYPTO_SUITE_SHANNON
+                _protobuf_enum_value(
+                    Keyexchange.Cryptosuite,
+                    "CRYPTO_SUITE_SHANNON",
+                )
             ],
-            login_crypto_hello=Keyexchange.LoginCryptoHelloUnion(
-                diffie_hellman=Keyexchange.LoginCryptoDiffieHellmanHello(
+            login_crypto_hello=_protobuf_message(
+                Keyexchange.LoginCryptoHelloUnion,
+                diffie_hellman=_protobuf_message(
+                    Keyexchange.LoginCryptoDiffieHellmanHello,
                     gc=self.__keys.public_key_bytes(), server_keys_known=1), ),
             padding=b"\x1e",
         )
@@ -1026,7 +1055,8 @@ class Session(Closeable, MessageListener, SubListener):
                 "APResponseMessage body".format(self.connection.address())
             ) from ex
         acc.write(ap_response_message_bytes)
-        ap_response_message_proto = Keyexchange.APResponseMessage()
+        ap_response_message_proto = _protobuf_empty(
+            Keyexchange.APResponseMessage)
         ap_response_message_proto.ParseFromString(ap_response_message_bytes)
         shared_key = util.int_to_bytes(
             self.__keys.compute_shared_key(
@@ -1055,12 +1085,15 @@ class Session(Closeable, MessageListener, SubListener):
         mac = HMAC.new(buffer.read(20), digestmod=SHA1)
         mac.update(acc.read())
         challenge = mac.digest()
-        client_response_plaintext_proto = Keyexchange.ClientResponsePlaintext(
-            crypto_response=Keyexchange.CryptoResponseUnion(),
-            login_crypto_response=Keyexchange.LoginCryptoResponseUnion(
-                diffie_hellman=Keyexchange.LoginCryptoDiffieHellmanResponse(
+        client_response_plaintext_proto = _protobuf_message(
+            Keyexchange.ClientResponsePlaintext,
+            crypto_response=_protobuf_empty(Keyexchange.CryptoResponseUnion),
+            login_crypto_response=_protobuf_message(
+                Keyexchange.LoginCryptoResponseUnion,
+                diffie_hellman=_protobuf_message(
+                    Keyexchange.LoginCryptoDiffieHellmanResponse,
                     hmac=challenge)),
-            pow_response=Keyexchange.PoWResponseUnion(),
+            pow_response=_protobuf_empty(Keyexchange.PoWResponseUnion),
         )
         client_response_plaintext_bytes = (
             client_response_plaintext_proto.SerializeToString())
@@ -1073,7 +1106,7 @@ class Session(Closeable, MessageListener, SubListener):
             if len(scrap) == 4:
                 payload = self.connection.read(
                     struct.unpack(">i", scrap)[0] - 4)
-                failed = Keyexchange.APResponseMessage()
+                failed = _protobuf_empty(Keyexchange.APResponseMessage)
                 failed.ParseFromString(payload)
                 raise RuntimeError(failed)
         except (socket.timeout, ConnectionError):
@@ -1118,7 +1151,7 @@ class Session(Closeable, MessageListener, SubListener):
         """ """
         return self.__inner.device_name
 
-    def device_type(self) -> Connect.DeviceType:
+    def device_type(self) -> int:
         """ """
         return self.__inner.device_type
 
@@ -1129,7 +1162,7 @@ class Session(Closeable, MessageListener, SubListener):
 
         """
         if resp.uri == "spotify:user:attributes:update":
-            attributes_update = UserAttributesUpdate()
+            attributes_update = _protobuf_empty(UserAttributesUpdate)
             attributes_update.ParseFromString(resp.payload)
             for pair in attributes_update.pairs_list:
                 self.__user_attributes[pair.key] = pair.value
@@ -1186,7 +1219,9 @@ class Session(Closeable, MessageListener, SubListener):
         if product is None:
             return
         for i in range(len(product)):
-            self.__user_attributes[product[i].tag] = product[i].text
+            text = product[i].text
+            if text is not None:
+                self.__user_attributes[product[i].tag] = text
         self.logger.debug("Parsed product info: {}".format(
             self.__user_attributes))
 
@@ -1222,7 +1257,8 @@ class Session(Closeable, MessageListener, SubListener):
                         ApResolver.get_random_accesspoint(), self.__inner.conf)
                     self.connect()
                     self.__authenticate_partial(
-                        Authentication.LoginCredentials(
+                        _protobuf_message(
+                            Authentication.LoginCredentials,
                             typ=self.__ap_welcome.reusable_auth_credentials_type,
                             username=self.__ap_welcome.canonical_username,
                             auth_data=self.__ap_welcome.reusable_auth_credentials,
@@ -1305,7 +1341,7 @@ class Session(Closeable, MessageListener, SubListener):
         return self.__stored_str
 
     def __authenticate_partial(self,
-                               credential: Authentication.LoginCredentials,
+                               credential: typing.Any,
                                remove_lock: bool) -> None:
         """
         Login to Spotify
@@ -1316,11 +1352,16 @@ class Session(Closeable, MessageListener, SubListener):
         assert self.connection is not None, "Connection not established"
         if self.cipher_pair is None:
             raise RuntimeError("Connection not established!")
-        client_response_encrypted_proto = Authentication.ClientResponseEncrypted(
+        client_response_encrypted_proto = _protobuf_message(
+            Authentication.ClientResponseEncrypted,
             login_credentials=credential,
-            system_info=Authentication.SystemInfo(
-                os=Authentication.Os.OS_UNKNOWN,
-                cpu_family=Authentication.CpuFamily.CPU_UNKNOWN,
+            system_info=_protobuf_message(
+                Authentication.SystemInfo,
+                os=_protobuf_enum_value(Authentication.Os, "OS_UNKNOWN"),
+                cpu_family=_protobuf_enum_value(
+                    Authentication.CpuFamily,
+                    "CPU_UNKNOWN",
+                ),
                 system_information_string=Version.system_info_string(),
                 device_id=self.__inner.device_id,
             ),
@@ -1331,7 +1372,7 @@ class Session(Closeable, MessageListener, SubListener):
             client_response_encrypted_proto.SerializeToString())
         packet = self.cipher_pair.receive_encoded(self.connection)
         if packet.is_cmd(Packet.Type.ap_welcome):
-            self.__ap_welcome = Authentication.APWelcome()
+            self.__ap_welcome = _protobuf_empty(Authentication.APWelcome)
             self.__ap_welcome.ParseFromString(packet.payload)
             self.__receiver = _Receiver(self)
             bytes0x0f = Random.get_random_bytes(0x14)
@@ -1377,7 +1418,7 @@ class Session(Closeable, MessageListener, SubListener):
                         "Failed to save credentials to file: {}".format(ex))
 
         elif packet.is_cmd(Packet.Type.auth_failure):
-            ap_login_failed = Keyexchange.APLoginFailed()
+            ap_login_failed = _protobuf_empty(Keyexchange.APLoginFailed)
             ap_login_failed.ParseFromString(packet.payload)
             self.close()
             raise _SpotifyAuthenticationException(ap_login_failed)
