@@ -113,10 +113,12 @@ class _Accumulator:
 
 class _ConnectionHolder:
     """ """
+    __address: str
     __buffer: io.BytesIO
     __socket: socket.socket
 
-    def __init__(self, sock: socket.socket):
+    def __init__(self, sock: socket.socket, address: str = "<unknown>"):
+        self.__address = address
         self.__buffer = io.BytesIO()
         self.__socket = sock
 
@@ -136,7 +138,11 @@ class _ConnectionHolder:
         sock.settimeout(10)
         sock.connect((ap_address, ap_port))
         sock.settimeout(None)
-        return _ConnectionHolder(sock)
+        return _ConnectionHolder(sock, address)
+
+    def address(self) -> str:
+        """Return the access point address backing this connection."""
+        return self.__address
 
     def close(self) -> None:
         """Close the connection"""
@@ -1000,12 +1006,25 @@ class Session(Closeable, MessageListener, SubListener):
         # Read APResponseMessage
         try:
             ap_response_message_length = self.connection.read_int()
-        except struct.error:
-            time.sleep(.1)
-            ap_response_message_length = self.connection.read_int()
+        except ConnectionError as ex:
+            raise ConnectionError(
+                "Access point {} closed the connection before sending "
+                "APResponseMessage length".format(self.connection.address())
+            ) from ex
+        if ap_response_message_length < 4:
+            raise ConnectionError(
+                "Access point {} sent invalid APResponseMessage length: {}"
+                .format(self.connection.address(), ap_response_message_length)
+            )
         acc.write_int(ap_response_message_length)
-        ap_response_message_bytes = self.connection.read(
-            ap_response_message_length - 4)
+        try:
+            ap_response_message_bytes = self.connection.read(
+                ap_response_message_length - 4)
+        except ConnectionError as ex:
+            raise ConnectionError(
+                "Access point {} closed the connection while sending "
+                "APResponseMessage body".format(self.connection.address())
+            ) from ex
         acc.write(ap_response_message_bytes)
         ap_response_message_proto = Keyexchange.APResponseMessage()
         ap_response_message_proto.ParseFromString(ap_response_message_bytes)
