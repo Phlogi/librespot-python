@@ -28,8 +28,11 @@ jobs:
         run: uv run --no-sync pyright
       - name: Proto modules are up to date
         run: uv run --no-sync python scripts/generate_proto_stubs.py --check
-      - name: Audit dependencies
-        run: uvx pip-audit
+      - name: Audit runtime dependencies
+        run: |
+          uv export --frozen --no-dev --no-emit-project --format requirements-txt |
+            grep -v ' @ git+' > /tmp/req.txt
+          uvx pip-audit -r /tmp/req.txt
 
   test:
     runs-on: ubuntu-latest
