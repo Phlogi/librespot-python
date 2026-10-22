@@ -32,17 +32,14 @@ class EventService(Closeable):
             resp = self.__session.mercury().send_sync(
                 RawMercuryRequest.Builder().set_uri(
                     _EVENT_SERVICE_URI).set_method("POST").
-                add_user_field("Accept-Language", "en").add_user_field(
-                    "X-ClientTimeStamp",
-                    str(int(time.time() * 1000))).add_payload_part(body).build())
-            self.logger.debug("Event sent. body: {}, result: {}".format(
-                body, resp.status_code))
-        except IOError as ex:
-            self.logger.error("Failed sending event: {} {}".format(
-                event_builder, ex))
+                add_user_field(key="Accept-Language", value="en").add_user_field(
+                    key="X-ClientTimeStamp",
+                    value=str(int(time.time() * 1000))).add_payload_part(body).build())
+            self.logger.debug(f"Event sent. body: {body}, result: {resp.status_code}")
+        except OSError as ex:
+            self.logger.error(f"Failed sending event: {event_builder} {ex}")
 
-    def send_event(self, event_or_builder: typing.Union[GenericEvent,
-                                                        EventBuilder]):
+    def send_event(self, event_or_builder: GenericEvent | EventBuilder):
         """
 
         :param event_or_builder: typing.Union[GenericEvent:
@@ -104,7 +101,7 @@ class EventService(Closeable):
             self.append_no_delimiter(event_type.value[0])
             self.append(event_type.value[1])
 
-        def append_no_delimiter(self, s: typing.Optional[str] = None) -> None:
+        def append_no_delimiter(self, s: str | None = None) -> None:
             """
 
             :param s: str:  (Default value = None)
@@ -115,8 +112,8 @@ class EventService(Closeable):
             self.body.write(s.encode())
 
         def append(self,
-                   c: typing.Optional[int] = None,
-                   s: typing.Optional[str] = None) -> EventService.EventBuilder:
+                   c: int | None = None,
+                   s: str | None = None) -> EventService.EventBuilder:
             """
 
             :param c: int:  (Default value = None)

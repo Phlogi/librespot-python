@@ -8,43 +8,94 @@
 ## Environment setup
 
 ### Prerequisites
-- Python 3.10+
+- Python 3.11+
+- [uv](https://docs.astral.sh/uv/)
 
-### Install runtime packages
+### Install dependencies
 
 ```sh
-pip install -r requirements.txt
+uv sync --extra dev
 ```
 
-### Install protoc
+Run the checks with:
 
-> This step is **only needed if you're changing any `.proto` serialization schema files**,
-> which will subsequently require using the protoc compiler to generate updated versions of 
-> the `*_pb2.py` Python stubs that implement serialization/deserialization for those schemas.
+```sh
+uv run pytest
+uv run ruff check
+uv run pyright
+```
 
-- Go to the [protobuf release matching the version pinned in `requirements.txt`](https://github.com/protocolbuffers/protobuf/releases/tag/v3.20.1).
-- Download and install the `protoc-*.zip` file meant for your platform.
+### Protocol buffer generation
 
-After modifying the `.proto` files you need to, **make sure to follow [these steps](#protocol-buffer-generation) to regenerate the Python stubs**.
+> This is **only needed if you change any `.proto` serialization schema files**.
 
-## Protocol buffer generation
+`grpcio-tools` is pinned in the `proto` extra and bundles the matching `protoc`.
+The generator emits both the runtime `*_pb2.py` modules and the `*_pb2.pyi` type
+stubs, normalises protoc's snake_case module names to the CamelCase names used by
+this package, and rewrites imports to absolute `librespot.proto.*` paths.
 
-> These steps are only necessary after changing `.proto` files.
+After changing a `.proto` file, regenerate everything with:
 
-- From the repository root, conveniently recompile all `.proto` schema files with this command:
+```bash
+uv run --extra proto python scripts/generate_proto_stubs.py
+uv run --extra proto python scripts/generate_proto_stubs.py --check
+```
 
-    ```bash
-    find proto -name "*.proto" | xargs protoc -I=proto --python_out=librespot/proto
-    ```
+Commit the source `.proto` and the regenerated Python files **together** so they
+can be compared easily. Regenerate with the pinned `grpcio-tools` version; a
+different `protoc` produces different output and makes `--check` fail.
 
-- Alternatively, to recompile a single file (e.g. `proto/metadata.proto`), run:
+## Testing
 
-    ```bash
-    protoc -I=proto --python_out=librespot/proto proto/metadata.proto
-    ```
+### Unit tests
 
-- Commit both the source `.proto` and the regenerated Python output **together** so they can
-be compared easily.
+```bash
+uv run pytest -m "not premium" --ignore=tests/test_e2e.py
+```
+
+### Spotify end-to-end tests
+
+`tests/test_e2e.py` logs in with stored credentials and exercises search,
+metadata, and (with `-m premium`) audio streaming. It skips itself when no
+credentials file is available.
+
+```bash
+SPOTIFY_CREDENTIALS_FILE=/path/to/credentials.json uv run pytest tests/test_e2e.py -m "not premium"
+SPOTIFY_CREDENTIALS_FILE=/path/to/credentials.json uv run pytest tests/test_e2e.py -m premium
+```
+
+The account can return `429` for search calls; that is Spotify rate limiting,
+not a librespot failure.
+
+### Full-stack zotify download
+
+This is the strongest integration check: latest `better-zotify` driving the
+local librespot checkout, downloading a real track.
+
+```bash
+uv venv --python 3.14 /tmp/zotify-it/venv
+uv pip install --python /tmp/zotify-it/venv/bin/python .
+uv pip install --python /tmp/zotify-it/venv/bin/python --no-deps \
+  "zotify @ git+ssh://git@github.com/Phlogi/better-zotify.git@throttle"
+uv pip install --python /tmp/zotify-it/venv/bin/python \
+  ffmpy music_tag Pillow pkce 'protobuf>=6.33.5,<7' pwinput \
+  'requests>=2.32.3' 'tabulate[widechars]' tqdm 'urllib3>=2'
+
+mkdir -p /tmp/zotify-it/creds /tmp/zotify-it/out
+cp /path/to/credentials.json /tmp/zotify-it/creds/credentials.json
+
+SPOTIFY_CLIENT_ID=... SPOTIFY_CLIENT_SECRET=... SAVE_CREDENTIALS=False \
+  /tmp/zotify-it/venv/bin/zotify --no-splash \
+  --creds /tmp/zotify-it/creds --root-path /tmp/zotify-it/out \
+  'spotify:track:4cOdK2wGLETKBW3PvgPWqT'
+
+ffprobe -v error -show_entries format=format_name,duration \
+  /tmp/zotify-it/out/*/*/*.ogg
+```
+
+`--no-deps` keeps zotify from re-installing librespot from git; the runtime
+dependencies are installed explicitly in the next step because current zotify
+requires Spotify OAuth client credentials in addition to `credentials.json`.
 
 ## Architecture
 

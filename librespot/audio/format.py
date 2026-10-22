@@ -1,5 +1,6 @@
-from librespot.proto import Metadata_pb2 as Metadata
 import enum
+
+from librespot.proto import Metadata_pb2 as Metadata
 
 
 class SuperAudioFormat(enum.Enum):
@@ -34,4 +35,4 @@ class SuperAudioFormat(enum.Enum):
                 Metadata.AudioFile.Format.FLAC_FLAC_24BIT,
         ]:
             return SuperAudioFormat.FLAC
-        raise RuntimeError("Unknown audio format: {}".format(audio_format))
+        raise RuntimeError(f"Unknown audio format: {audio_format}")

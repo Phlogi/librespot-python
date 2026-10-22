@@ -6,15 +6,14 @@ import tempfile
 
 import pytest
 
-from librespot.session import Session
 from librespot.metadata import (
     AlbumId,
     ArtistId,
-    EpisodeId,
     PlaylistId,
     ShowId,
     TrackId,
 )
+from librespot.session import Session
 
 # ---------------------------------------------------------------------------
 # Well-known Spotify content URIs
@@ -84,6 +83,7 @@ def _get_credentials_file() -> str:
         "  \"\n"
         "Or set SPOTIFY_CREDENTIALS_FILE in .env.e2e-testing"
     )
+    raise AssertionError("unreachable")
 
 
 @pytest.fixture(scope="session")

@@ -26,7 +26,7 @@ class TokenProvider:
     logger = logging.getLogger("Librespot:TokenProvider")
     token_expire_threshold = _TOKEN_EXPIRE_THRESHOLD_SECONDS
     __session: Session
-    __tokens: typing.List[StoredToken]
+    __tokens: list[StoredToken]
 
     def __init__(self, session: Session):
         self.__session = session
@@ -34,7 +34,7 @@ class TokenProvider:
         self.__tokens_lock = threading.Lock()
 
     def find_token_with_all_scopes(
-            self, scopes: typing.List[str]) -> typing.Union[StoredToken, None]:
+            self, scopes: list[str]) -> StoredToken | None:
         """
 
         :param scopes: typing.List[str]:
@@ -53,10 +53,10 @@ class TokenProvider:
         """
         token = self.get_token(scope)
         if token is None:
-            raise RuntimeError("Failed to get token for scope: {}".format(scope))
+            raise RuntimeError(f"Failed to get token for scope: {scope}")
         return token.access_token
 
-    def get_token(self, *scopes) -> typing.Optional[StoredToken]:
+    def get_token(self, *scopes) -> StoredToken | None:
         """
 
         :param *scopes:
@@ -79,10 +79,10 @@ class TokenProvider:
         if token is not None:
             with self.__tokens_lock:
                 self.__tokens.append(token)
-            self.logger.debug("Using Login5 access token for scopes: {}".format(scopes))
+            self.logger.debug(f"Using Login5 access token for scopes: {scopes}")
         return token
 
-    def login5(self, scopes: typing.List[str]) -> typing.Union[StoredToken, None]:
+    def login5(self, scopes: list[str]) -> StoredToken | None:
         """Submit Login5 request for a fresh access token"""
 
         if self.__session.ap_welcome():
@@ -117,9 +117,9 @@ class TokenProvider:
                     })
                     return token
                 else:
-                    self.logger.warning("Login5 authentication failed: {}".format(login5_response.error))
+                    self.logger.warning(f"Login5 authentication failed: {login5_response.error}")
             else:
-                self.logger.warning("Login5 request failed with status: {}".format(response.status_code))
+                self.logger.warning(f"Login5 request failed with status: {response.status_code}")
         else:
             self.logger.error("Login5 authentication failed: No APWelcome found")
 
@@ -127,7 +127,7 @@ class TokenProvider:
         """ """
         expires_in: int
         access_token: str
-        scopes: typing.List[str]
+        scopes: list[str]
         timestamp: int
 
         def __init__(self, obj):
@@ -148,18 +148,12 @@ class TokenProvider:
             :param scope: str:
 
             """
-            for s in self.scopes:
-                if s == scope:
-                    return True
-            return False
+            return any(s == scope for s in self.scopes)
 
-        def has_scopes(self, sc: typing.List[str]) -> bool:
+        def has_scopes(self, sc: list[str]) -> bool:
             """
 
             :param sc: typing.List[str]:
 
             """
-            for s in sc:
-                if not self.has_scope(s):
-                    return False
-            return True
+            return all(self.has_scope(s) for s in sc)

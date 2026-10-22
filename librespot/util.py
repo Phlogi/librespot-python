@@ -1,6 +1,7 @@
-from Cryptodome import Random
 import binascii
 import math
+
+from Cryptodome import Random
 
 
 def bytes_to_hex(buffer: bytes) -> str:
@@ -28,7 +29,7 @@ def int_to_bytes(i: int):
     """
     width = i.bit_length()
     width += 8 - ((width % 8) or 8)
-    fmt = '%%0%dx' % (width // 4)
+    fmt = f"%0{width // 4}x"
     return b"\x00" if i == 0 else binascii.unhexlify(fmt % i)
 
 
@@ -96,9 +97,8 @@ class Base62:
 
     def estimate_output_length(self, input_length: int, source_base: int,
                                target_base: int):
-        return int(
-            math.ceil((math.log(source_base) / math.log(target_base)) *
-                      input_length))
+        return math.ceil((math.log(source_base) / math.log(target_base)) *
+                         input_length)
 
     def reverse(self, arr: bytes):
         length = len(arr)

@@ -1,8 +1,5 @@
 from __future__ import annotations
-from librespot import util
-from librespot.crypto import Packet
-from librespot.proto.Metadata_pb2 import AudioFile
-from librespot.structure import Closeable, PacketsReceiver
+
 import concurrent.futures
 import io
 import logging
@@ -11,12 +8,24 @@ import struct
 import threading
 import typing
 
+from librespot import util
+from librespot.crypto import Packet
+from librespot.structure import Closeable, PacketsReceiver
+
 if typing.TYPE_CHECKING:
     from librespot.core import Session
 
 
+class WritableAudioFile(typing.Protocol):
+    def write_chunk(self, chunk: bytes | io.BytesIO, chunk_index: int, cached: bool) -> None: ...
+
+    def write_header(self, header_id: int, header_data: bytearray, cached: bool) -> None: ...
+
+    def stream_error(self, chunk_index: int, code: int) -> None: ...
+
+
 class ChannelManager(Closeable, PacketsReceiver):
-    channels: typing.Dict[int, Channel]
+    channels: dict[int, Channel]
     chunk_size = 128 * 1024
     executor_service: concurrent.futures.ThreadPoolExecutor
     logger = logging.getLogger("Librespot:ChannelManager")
@@ -31,7 +40,7 @@ class ChannelManager(Closeable, PacketsReceiver):
         self.seq_holder = 0
         self.seq_holder_lock = threading.Condition()
 
-    def request_chunk(self, file_id: bytes, index: int, file: AudioFile):
+    def request_chunk(self, file_id: bytes, index: int, file: WritableAudioFile):
         start = int(index * self.chunk_size / 4)
         end = int((index + 1) * self.chunk_size / 4)
         channel = ChannelManager.Channel(self, file, index)
@@ -55,8 +64,7 @@ class ChannelManager(Closeable, PacketsReceiver):
             channel = self.channels.get(chunk_id)
             if channel is None:
                 self.logger.warning(
-                    "Couldn't find channel, id: {}, received: {}".format(
-                        chunk_id, len(packet.payload)))
+                    f"Couldn't find channel, id: {chunk_id}, received: {len(packet.payload)}")
                 return
             channel.add_to_queue(payload)
         elif packet.is_cmd(Packet.Type.channel_error):
@@ -71,8 +79,7 @@ class ChannelManager(Closeable, PacketsReceiver):
             channel.stream_error(struct.unpack(">H", payload.read(2))[0])
         else:
             self.logger.warning(
-                "Couldn't handle packet, cmd: {}, payload: {}".format(
-                    packet.cmd, util.bytes_to_hex(packet.payload)))
+                f"Couldn't handle packet, cmd: {packet.cmd}, payload: {util.bytes_to_hex(packet.payload)}")
 
     def close(self) -> None:
         self.executor_service.shutdown()
@@ -83,10 +90,10 @@ class ChannelManager(Closeable, PacketsReceiver):
         q: queue.Queue
         __buffer: io.BytesIO
         __chunk_index: int
-        __file: AudioFile
+        __file: WritableAudioFile
         __header: bool
 
-        def __init__(self, channel_manager: ChannelManager, file: AudioFile,
+        def __init__(self, channel_manager: ChannelManager, file: WritableAudioFile,
                      chunk_index: int):
             self.__buffer = io.BytesIO()
             self.__header = True

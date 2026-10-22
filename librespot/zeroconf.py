@@ -1,13 +1,6 @@
+# pyright: reportGeneralTypeIssues=false, reportCallIssue=false, reportAttributeAccessIssue=false
 from __future__ import annotations
-from Cryptodome.Cipher import AES
-from Cryptodome.Hash import HMAC, SHA1
-from Cryptodome.Util import Counter
-from librespot import util, Version
-from librespot.session import Session
-from librespot.crypto import DiffieHellman
-from librespot.proto import Connect_pb2 as Connect
-from librespot.structure import Closeable, Runnable, SessionListener
-from requests.structures import CaseInsensitiveDict
+
 import base64
 import concurrent.futures
 import copy
@@ -19,15 +12,26 @@ import socket
 import threading
 import typing
 import urllib.parse
-import zeroconf
+
+from Cryptodome.Cipher import AES
+from Cryptodome.Hash import HMAC, SHA1
+from Cryptodome.Util import Counter
+from requests.structures import CaseInsensitiveDict
+from zeroconf import ServiceInfo, Zeroconf
+
+from librespot import Version, util
+from librespot.crypto import DiffieHellman
+from librespot.proto import Connect_pb2 as Connect
+from librespot.session import Session
+from librespot.structure import Closeable, Runnable, SessionListener
 
 
 class ZeroconfServer(Closeable):
     logger = logging.getLogger("Librespot:ZeroconfServer")
     service = "_spotify-connect._tcp.local."
-    __connecting_username: typing.Union[str, None]
+    __connecting_username: str | None
     __connection_lock: threading.Condition
-    __default_get_info_fields = {
+    __default_get_info_fields: typing.ClassVar[dict[str, object]] = {
         "status": 101,
         "statusString": "OK",
         "spotifyError": 0,
@@ -44,7 +48,7 @@ class ZeroconfServer(Closeable):
         "resolverVersion": "0",
         "scope": "streaming,client-authorization-universal",
     }
-    __default_successful_add_user = {
+    __default_successful_add_user: typing.ClassVar[dict[str, object]] = {
         "status": 101,
         "spotifyError": 0,
         "statusString": "OK",
@@ -53,10 +57,10 @@ class ZeroconfServer(Closeable):
     __max_port = 65535
     __min_port = 1024
     __runner: HttpRunner
-    __service_info: zeroconf.ServiceInfo
-    __session: typing.Union[Session, None]
-    __session_listeners: typing.List[SessionListener]
-    __zeroconf: zeroconf.Zeroconf
+    __service_info: ServiceInfo
+    __session: Session | None
+    __session_listeners: list[SessionListener]
+    __zeroconf: Zeroconf
 
     def __init__(self, inner: Inner, listen_port):
         self.__connecting_username = None
@@ -70,8 +74,8 @@ class ZeroconfServer(Closeable):
         self.__runner = ZeroconfServer.HttpRunner(self, listen_port)
         threading.Thread(target=self.__runner.run,
                          name="zeroconf-http-server").start()
-        self.__zeroconf = zeroconf.Zeroconf()
-        self.__service_info = zeroconf.ServiceInfo(
+        self.__zeroconf = Zeroconf()
+        self.__service_info = ServiceInfo(
             ZeroconfServer.service,
             inner.device_name + "." + ZeroconfServer.service,
             listen_port,
@@ -128,7 +132,7 @@ class ZeroconfServer(Closeable):
         with self.__connection_lock:
             if username == self.__connecting_username:
                 self.logger.info(
-                    "{} is already trying to connect.".format(username))
+                    f"{username} is already trying to connect.")
                 __socket.send(http_version.encode())
                 __socket.send(b" 403 Forbidden")
                 __socket.send(self.__eol)
@@ -261,8 +265,7 @@ class ZeroconfServer(Closeable):
             self.__socket.listen(5)
             self.__zeroconf_server = zeroconf_server
             self.__zeroconf_server.logger.info(
-                "Zeroconf HTTP server started successfully on port {}!".format(
-                    port))
+                f"Zeroconf HTTP server started successfully on port {port}!")
 
         def close(self) -> None:
             self.__should_stop = True
@@ -272,7 +275,7 @@ class ZeroconfServer(Closeable):
         def run(self):
             while not self.__should_stop:
                 try:
-                    __socket, address = self.__socket.accept()
+                    __socket, _address = self.__socket.accept()
                 except OSError:
                     break
 
@@ -287,7 +290,7 @@ class ZeroconfServer(Closeable):
             request_line = request.readline().strip().split(b" ")
             if len(request_line) != 3:
                 self.__zeroconf_server.logger.warning(
-                    "Unexpected request line: {}".format(request_line))
+                    f"Unexpected request line: {request_line}")
             method = request_line[0].decode()
             path = request_line[1].decode()
             http_version = request_line[2].decode()
@@ -300,14 +303,13 @@ class ZeroconfServer(Closeable):
                 headers[split[0].decode()] = split[1].strip().decode()
             if not self.__zeroconf_server.has_valid_session():
                 self.__zeroconf_server.logger.debug(
-                    "Handling request: {}, {}, {}, headers: {}".format(
-                        method, path, http_version, headers))
+                    f"Handling request: {method}, {path}, {http_version}, headers: {headers}")
             params = {}
             if method == "POST":
                 content_type = headers.get("Content-Type")
                 if content_type != "application/x-www-form-urlencoded":
                     self.__zeroconf_server.logger.error(
-                        "Bad Content-Type: {}".format(content_type))
+                        f"Bad Content-Type: {content_type}")
                     return
                 content_length_str = headers.get("Content-Length")
                 if content_length_str is None:
@@ -341,21 +343,20 @@ class ZeroconfServer(Closeable):
                 self.__zeroconf_server.handle_get_info(__socket, http_version)
             else:
                 self.__zeroconf_server.logger.warning(
-                    "Unknown action: {}".format(action))
+                    f"Unknown action: {action}")
 
     class Inner:
-        conf: typing.Optional[Session.Configuration]
+        conf: Session.Configuration | None
         device_name: str
         device_id: str
-        device_type: Connect.DeviceType
+        device_type: int
         preferred_locale: str
 
-        def __init__(self, device_type: Connect.DeviceType, device_name: str,
-                     device_id: typing.Optional[str], preferred_locale: str,
-                     conf: typing.Optional[Session.Configuration]):
+        def __init__(self, device_type: int, device_name: str,
+                     device_id: str | None, preferred_locale: str,
+                     conf: Session.Configuration | None):
             self.conf = conf
             self.device_name = device_name
-            self.device_id = util.random_hex_string(
-                40).lower() if not device_id else device_id
+            self.device_id = device_id or util.random_hex_string(40).lower()
             self.device_type = device_type
             self.preferred_locale = preferred_locale

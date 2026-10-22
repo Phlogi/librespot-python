@@ -28,11 +28,11 @@ class ApResolver:
         :returns: The resulting object will be returned
 
         """
-        last_exception: typing.Optional[Exception] = None
+        last_exception: Exception | None = None
         for attempt in range(1, _AP_RESOLVE_MAX_RETRIES + 1):
             try:
                 response = requests.get(
-                    "{}?type={}".format(ApResolver.base_url, service_type),
+                    f"{ApResolver.base_url}?type={service_type}",
                     timeout=_HTTP_TIMEOUT_SECONDS,
                 )
                 if response.status_code != 200:

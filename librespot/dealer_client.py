@@ -14,9 +14,7 @@ from requests.structures import CaseInsensitiveDict
 
 from librespot.apresolver import ApResolver
 from librespot.core_types import MessageType
-from librespot.structure import Closeable
-from librespot.structure import MessageListener
-from librespot.structure import RequestListener
+from librespot.structure import Closeable, MessageListener, RequestListener
 
 if typing.TYPE_CHECKING:
     from librespot.core import Session
@@ -29,11 +27,11 @@ _DEALER_RECONNECT_DELAY_SECONDS = 10
 class DealerClient(Closeable):
     """ """
     logger = logging.getLogger("Librespot:DealerClient")
-    __connection: typing.Union[ConnectionHolder, None]
-    __last_scheduled_reconnection: typing.Union[threading.Timer, None]
-    __message_listeners: typing.Dict[MessageListener, typing.List[str]]
+    __connection: ConnectionHolder | None
+    __last_scheduled_reconnection: threading.Timer | None
+    __message_listeners: dict[MessageListener, list[str]]
     __message_listeners_lock: threading.Condition
-    __request_listeners: typing.Dict[str, RequestListener]
+    __request_listeners: dict[str, RequestListener]
     __request_listeners_lock: threading.Condition
     __session: Session
     __worker: concurrent.futures.ThreadPoolExecutor
@@ -58,7 +56,7 @@ class DealerClient(Closeable):
         with self.__message_listeners_lock:
             if listener in self.__message_listeners:
                 raise TypeError(
-                    "A listener for {} has already been added.".format(uris))
+                    f"A listener for {uris} has already been added.")
             self.__message_listeners[listener] = uris
             self.__message_listeners_lock.notify_all()
 
@@ -72,7 +70,7 @@ class DealerClient(Closeable):
         with self.__request_listeners_lock:
             if uri in self.__request_listeners:
                 raise TypeError(
-                    "A listener for '{}' has already been added.".format(uri))
+                    f"A listener for '{uri}' has already been added.")
             self.__request_listeners[uri] = listener
             self.__request_listeners_lock.notify_all()
 
@@ -126,9 +124,7 @@ class DealerClient(Closeable):
         payloads = obj.get("payloads")
         decoded_payloads: typing.Any
         if payloads is not None:
-            if headers.get("Content-Type") == "application/json":
-                decoded_payloads = payloads
-            elif headers.get("Content-Type") == "plain/text":
+            if headers.get("Content-Type") == "application/json" or headers.get("Content-Type") == "plain/text":
                 decoded_payloads = payloads
             else:
                 decoded_payloads = base64.b64decode(payloads)
@@ -147,14 +143,14 @@ class DealerClient(Closeable):
                     if uri.startswith(key) and not dispatched:
                         interesting = True
 
-                        def anonymous(l=listener, u=uri, h=headers, p=decoded_payloads):
+                        def anonymous(listener_=listener, u=uri, h=headers, p=decoded_payloads):
                             """ """
-                            l.on_message(u, h, p)
+                            listener_.on_message(u, h, p)
 
                         self.__worker.submit(anonymous)
                         dispatched = True
         if not interesting:
-            self.logger.debug("Couldn't dispatch message: {}".format(uri))
+            self.logger.debug(f"Couldn't dispatch message: {uri}")
 
     def handle_request(self, obj: typing.Any) -> None:
         """
@@ -176,8 +172,8 @@ class DealerClient(Closeable):
         sender = payload.get("sent_by_device_id")
         command = payload.get("command")
         self.logger.debug(
-            "Received request. [mid: {}, key: {}, pid: {}, sender: {}, command: {}]"
-            .format(mid, key, pid, sender, command))
+            f"Received request. [mid: {mid}, key: {key}, pid: {pid}, sender: {sender}, command: {command}]"
+            )
         interesting = False
         with self.__request_listeners_lock:
             for mid_prefix in self.__request_listeners:
@@ -196,12 +192,11 @@ class DealerClient(Closeable):
                         if conn is not None:
                             conn.send_reply(key, result)
                         self.logger.warning(
-                            "Handled request. [key: {}, result: {}]".format(
-                                key, result))
+                            f"Handled request. [key: {key}, result: {result}]")
 
                     self.__worker.submit(anonymous)
         if not interesting:
-            self.logger.debug("Couldn't dispatch request: {}".format(mid))
+            self.logger.debug(f"Couldn't dispatch request: {mid}")
 
     def remove_message_listener(self, listener: MessageListener) -> None:
         """
@@ -241,7 +236,7 @@ class DealerClient(Closeable):
         """ """
         __closed: bool
         __dealer_client: DealerClient
-        __last_scheduled_ping: typing.Union[threading.Timer, None]
+        __last_scheduled_ping: threading.Timer | None
         __received_pong: bool
         __session: Session
         __url: str
@@ -309,8 +304,7 @@ class DealerClient(Closeable):
             elif typ == MessageType.PING:
                 pass
             else:
-                raise RuntimeError("Unknown message type for {}".format(
-                    typ.value))
+                raise RuntimeError(f"Unknown message type for {typ.value}")
 
         def on_open(self, ws: websocket.WebSocketApp):
             """
@@ -320,10 +314,9 @@ class DealerClient(Closeable):
             """
             if self.__closed:
                 self.__dealer_client.logger.critical(
-                    "I wonder what happened here... Terminating. [closed: {}]".
-                    format(self.__closed))
+                    f"I wonder what happened here... Terminating. [closed: {self.__closed}]")
             self.__dealer_client.logger.debug(
-                "Dealer connected! [url: {}]".format(self.__url))
+                f"Dealer connected! [url: {self.__url}]")
             self._schedule_ping()
 
         def _schedule_ping(self) -> None:

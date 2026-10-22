@@ -1,14 +1,17 @@
 from __future__ import annotations
+
+import collections.abc
 import typing
 
 if typing.TYPE_CHECKING:
+    from requests.structures import CaseInsensitiveDict
+
     from librespot.audio import AbsChunkedInputStream
     from librespot.audio.format import SuperAudioFormat
     from librespot.core import DealerClient, Session
     from librespot.crypto import Packet
     from librespot.mercury import MercuryClient
     from librespot.proto import Metadata_pb2 as Metadata
-    from requests.structures import CaseInsensitiveDict
 
 
 class AudioDecrypt:
@@ -21,7 +24,7 @@ class AudioDecrypt:
 
 class AudioQualityPicker:
     def get_file(self,
-                 files: typing.List[Metadata.AudioFile]) -> Metadata.AudioFile:
+                 files: collections.abc.Sequence[Metadata.AudioFile]) -> Metadata.AudioFile:
         raise NotImplementedError
 
 

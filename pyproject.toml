@@ -1,14 +1,105 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "librespot"
-version = "0.0.10"
-requires-python = ">=3.10"
+description = "Open Source Spotify Client"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE.txt"]
+authors = [{ name = "kokarare1212" }]
+requires-python = ">=3.11"
+dynamic = ["version"]
+keywords = ["spotify", "librespot", "client", "streaming"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Multimedia :: Sound/Audio",
+  "Typing :: Typed",
+]
+dependencies = [
+  "defusedxml>=0.7.1",
+  # 6.33.5 clears PYSEC-2026-1806 and PYSEC-2026-1805.
+  # Keep <7: the generated modules validate against the 6.x runtime.
+  "protobuf>=6.33.5,<7",
+  "pycryptodomex>=3.22.0",
+  "requests>=2.32.3",
+  "websocket-client>=1.8.0",
+  "zeroconf>=0.146.4",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pyright>=1.1.400",
+  "pytest>=9.0.2",
+  "ruff>=0.8.0",
+]
+proto = [
+  # Pinned so `generate_proto_stubs.py --check` is deterministic.
+  "grpcio-tools==1.76.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/kokarare1212/librespot-python"
+Source = "https://github.com/kokarare1212/librespot-python"
+
+[tool.setuptools.dynamic]
+version = { attr = "librespot._version.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["librespot*", "librespot_player*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+librespot = ["py.typed"]
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 markers = [
-    "premium: requires Spotify Premium",
+  "premium: requires Spotify Premium",
 ]
 
-[dependency-groups]
-dev = [
-    "pytest>=9.0.2",
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = [
+  "librespot/proto",
+  "build",
+  "dist",
 ]
+
+[tool.ruff.lint]
+select = [
+  "E",
+  "W",
+  "F",
+  "I",
+  "UP",
+  "B",
+  "SIM",
+  "RUF",
+]
+ignore = [
+  "E501",
+  "RUF001",
+  "RUF002",
+  "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"librespot/__init__.py" = ["F401"]
+
+[tool.pyright]
+include = ["librespot", "librespot_player", "tests"]
+exclude = ["**/__pycache__", "librespot/proto"]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+reportMissingImports = false
+reportMissingModuleSource = false
+reportFunctionMemberAccess = false

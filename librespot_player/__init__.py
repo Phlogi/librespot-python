@@ -1,21 +1,24 @@
 from __future__ import annotations
-from librespot import Version
-from librespot.audio.decoders import AudioQuality
-from librespot.session import Session
-from librespot.mercury import MercuryRequests
-from librespot.proto import Connect_pb2 as Connect
-from librespot.structure import Closeable, MessageListener, RequestListener
-from requests.structures import CaseInsensitiveDict
+
 import concurrent.futures
 import logging
 import typing
 import urllib.parse
 
+from requests.structures import CaseInsensitiveDict
+
+from librespot import Version
+from librespot.audio.decoders import AudioQuality
+from librespot.mercury import MercuryRequests
+from librespot.proto import Connect_pb2 as Connect
+from librespot.session import Session
+from librespot.structure import Closeable, MessageListener, RequestListener
+
 
 class DeviceStateHandler(Closeable, MessageListener, RequestListener):
     logger = logging.getLogger("Librespot:DeviceStateHandler")
     __closing = False
-    __connection_id: typing.Optional[str] = None
+    __connection_id: str | None = None
     __device_info: Connect.DeviceInfo
     __put_state: Connect.PutStateRequest
     __put_state_worker = concurrent.futures.ThreadPoolExecutor()
@@ -43,7 +46,7 @@ class DeviceStateHandler(Closeable, MessageListener, RequestListener):
         self.__put_state_worker.shutdown()
 
     def initialize_device_info(self, session: Session,
-                               conf: PlayerConfiguration) -> Connect.Device:
+                               conf: PlayerConfiguration) -> Connect.DeviceInfo:
         return Connect.DeviceInfo(
             can_play=True,
             capabilities=Connect.Capabilities(
@@ -65,7 +68,7 @@ class DeviceStateHandler(Closeable, MessageListener, RequestListener):
             client_id=MercuryRequests.keymaster_client_id,
             device_id=session.device_id(),
             device_software_version=Version.version_string(),
-            device_type=session.device_type(),
+            device_type=typing.cast(Connect.DeviceType, session.device_type()),
             name=session.device_name(),
             spirc_version="3.2.6",
             volume=conf.initial_volume,
@@ -74,16 +77,14 @@ class DeviceStateHandler(Closeable, MessageListener, RequestListener):
     def put_connect_state(self, request: Connect.PutStateRequest):
         assert self.__connection_id is not None, "Connection ID not set"
         self.__session.api().put_connect_state(self.__connection_id, request)
-        self.logger.info("Put state. [ts: {}, connId: {}, reason: {}]".format(
-            request.client_side_timestamp, self.__connection_id,
-            request.put_state_reason))
+        self.logger.info(f"Put state. [ts: {request.client_side_timestamp}, connId: {self.__connection_id}, reason: {request.put_state_reason}]")
 
     def update_connection_id(self, newer: str) -> None:
         newer = urllib.parse.unquote(newer)
         if self.__connection_id is None or self.__connection_id != newer:
             self.__connection_id = newer
             self.logger.debug(
-                "Updated Spotify-Connection-Id: {}".format(newer))
+                f"Updated Spotify-Connection-Id: {newer}")
 
 
 class Player:

@@ -1,3 +1,4 @@
+# pyright: reportOptionalMemberAccess=false
 """Functional end-to-end tests for librespot-python.
 
 All tests are read-only — no account state modifications.
@@ -14,9 +15,8 @@ from librespot.audio.decoders import (
     VorbisOnlyAudioQuality,
 )
 from librespot.audio.format import SuperAudioFormat
-from librespot.session import Session
 from librespot.metadata import EpisodeId
-
+from librespot.session import Session
 from tests.conftest import (
     ALBUM_A_NIGHT_AT_THE_OPERA,
     ARTIST_QUEEN,

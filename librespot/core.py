@@ -16,17 +16,24 @@ from __future__ import annotations
 
 # Deprecated: import from librespot.api instead
 from librespot.api import ApiClient  # noqa: F401
+
 # Deprecated: import from librespot.apresolver instead
 from librespot.apresolver import ApResolver  # noqa: F401
+
 # Deprecated: import from librespot.core_types instead
 from librespot.core_types import MessageType  # noqa: F401
+
 # Deprecated: import from librespot.dealer_client instead
 from librespot.dealer_client import DealerClient  # noqa: F401
+
 # Deprecated: import from librespot.event_service instead
 from librespot.event_service import EventService  # noqa: F401
+
 # Deprecated: import from librespot.search instead
 from librespot.search import SearchManager  # noqa: F401
+
 # Deprecated: import from librespot.session instead
 from librespot.session import Session  # noqa: F401
+
 # Deprecated: import from librespot.token_provider instead
 from librespot.token_provider import TokenProvider  # noqa: F401

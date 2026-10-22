@@ -9,18 +9,18 @@ from requests.structures import CaseInsensitiveDict
 from librespot import Version
 from librespot.apresolver import ApResolver
 from librespot.mercury import MercuryRequests
-from librespot.metadata import AlbumId
-from librespot.metadata import ArtistId
-from librespot.metadata import EpisodeId
-from librespot.metadata import PlaylistId
-from librespot.metadata import ShowId
-from librespot.metadata import TrackId
+from librespot.metadata import AlbumId, ArtistId, EpisodeId, PlaylistId, ShowId, TrackId
 from librespot.proto import ClientToken_pb2 as ClientToken
 from librespot.proto import Connect_pb2 as Connect
 from librespot.proto import Connectivity_pb2 as Connectivity
 from librespot.proto import Metadata_pb2 as Metadata
 from librespot.proto import Playlist4External_pb2 as Playlist4External
-from librespot.proto.ExtendedMetadata_pb2 import EntityRequest, BatchedEntityRequest, ExtensionQuery, BatchedExtensionResponse
+from librespot.proto.ExtendedMetadata_pb2 import (
+    BatchedEntityRequest,
+    BatchedExtensionResponse,
+    EntityRequest,
+    ExtensionQuery,
+)
 from librespot.proto.ExtensionKind_pb2 import ExtensionKind
 from librespot.structure import Closeable
 
@@ -35,20 +35,20 @@ class ApiClient(Closeable):
     """ """
     logger = logging.getLogger("Librespot:ApiClient")
     __base_url: str
-    __client_token_str: typing.Optional[str] = None
+    __client_token_str: str | None = None
     __session: Session
 
     def __init__(self, session: Session):
         self.__session = session
-        self.__base_url = "https://{}".format(ApResolver.get_random_spclient())
+        self.__base_url = f"https://{ApResolver.get_random_spclient()}"
 
     def build_request(
         self,
         method: str,
         suffix: str,
-        headers: typing.Union[None, CaseInsensitiveDict[str]],
-        body: typing.Union[None, bytes],
-        url: typing.Union[None, str],
+        headers: CaseInsensitiveDict[str] | None,
+        body: bytes | None,
+        url: str | None,
     ) -> requests.PreparedRequest:
         """
 
@@ -68,10 +68,7 @@ class ApiClient(Closeable):
             self.__client_token_str = resp.granted_token.token
             self.logger.debug("Updated client token")
 
-        if url is None:
-            url = self.__base_url + suffix
-        else:
-            url = url + suffix
+        url = self.__base_url + suffix if url is None else url + suffix
 
         if headers is None:
             headers = CaseInsensitiveDict()
@@ -88,8 +85,8 @@ class ApiClient(Closeable):
         self,
         method: str,
         suffix: str,
-        headers: typing.Union[None, CaseInsensitiveDict[str]],
-        body: typing.Union[None, bytes],
+        headers: CaseInsensitiveDict[str] | None,
+        body: bytes | None,
     ) -> requests.Response:
         """
 
@@ -111,8 +108,8 @@ class ApiClient(Closeable):
         method: str,
         url: str,
         suffix: str,
-        headers: typing.Union[None, CaseInsensitiveDict[str]],
-        body: typing.Union[None, bytes],
+        headers: CaseInsensitiveDict[str] | None,
+        body: bytes | None,
     ) -> requests.Response:
         """
 
@@ -143,7 +140,7 @@ class ApiClient(Closeable):
         """
         response = self.send(
             "PUT",
-            "/connect-state/v1/devices/{}".format(self.__session.device_id()),
+            f"/connect-state/v1/devices/{self.__session.device_id()}",
             CaseInsensitiveDict({
                 "Content-Type": "application/protobuf",
                 "X-Spotify-Connection-Id": connection_id,
@@ -152,11 +149,9 @@ class ApiClient(Closeable):
         )
         if response.status_code == 413:
             self.logger.warning(
-                "PUT state payload is too large: {} bytes uncompressed.".
-                format(len(proto.SerializeToString())))
+                f"PUT state payload is too large: {len(proto.SerializeToString())} bytes uncompressed.")
         elif response.status_code != 200:
-            self.logger.warning("PUT state returned {}. headers: {}".format(
-                response.status_code, response.headers))
+            self.logger.warning(f"PUT state returned {response.status_code}. headers: {response.headers}")
 
     def get_ext_metadata(self, extension_kind: ExtensionKind, uri: str):
         headers = CaseInsensitiveDict({"content-type": "application/x-protobuf"})
@@ -174,7 +169,7 @@ class ApiClient(Closeable):
         proto.ParseFromString(body)
         entityextd = proto.extended_metadata.pop().extension_data.pop()
         if entityextd.header.status_code != 200:
-            raise ConnectionError("Extended Metadata request failed: Status code {}".format(entityextd.header.status_code))
+            raise ConnectionError(f"Extended Metadata request failed: Status code {entityextd.header.status_code}")
         mdb: bytes = entityextd.extension_data.value
         return mdb
 
@@ -241,12 +236,12 @@ class ApiClient(Closeable):
 
         """
         response = self.send("GET",
-                             "/playlist/v2/playlist/{}".format(_id.id()), None,
+                             f"/playlist/v2/playlist/{_id.id()}", None,
                              None)
         ApiClient.StatusCodeException.check_status(response)
         body = response.content
         if body is None:
-            raise IOError()
+            raise OSError()
         proto = Playlist4External.SelectedListContent()
         proto.ParseFromString(body)
         return proto

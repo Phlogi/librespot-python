@@ -1,16 +1,17 @@
+import contextlib
 import os
 import re
 import socket
 import threading
-import typing
+
 from requests.structures import CaseInsensitiveDict
 
 from librespot.audio.decoders import AudioQuality, VorbisOnlyAudioQuality
-from librespot.session import Session
 from librespot.metadata import TrackId
+from librespot.session import Session
 
-session: typing.Optional[Session] = None
-sock: typing.Optional[socket.socket] = None
+session: Session | None = None
+sock: socket.socket | None = None
 
 
 def handler(client: socket.socket, address: str):
@@ -22,7 +23,6 @@ def handler(client: socket.socket, address: str):
     req_header_str = req_raw.split(b"\r\n\r\n")[0]
     req_body_str = req_raw.split(b"\r\n\r\n")[1]
     req_http_arr = req_http_raw.split(b" ")
-    req_method = req_http_arr[0]
     req_uri = req_http_arr[1]
     req_http_version = req_http_arr[2]
     req_header = CaseInsensitiveDict()
@@ -57,10 +57,8 @@ class HttpCode:
 def main():
     global session, sock
     if os.path.isfile("credentials.json"):
-        try:
+        with contextlib.suppress(RuntimeError):
             session = Session.Builder().stored_file().create()
-        except RuntimeError:
-            pass
     if session is None or not session.is_valid():
         username = input("Username: ")
         password = input("Password: ")
@@ -105,9 +103,8 @@ def response(client: socket.socket, uri: str, header: CaseInsensitiveDict,
         client.send(b"Access-Control-Allow-Origin: *\r\n")
         client.send(b"Content-Length: " +
                     (str(stream.input_stream.stream().size()).encode() if
-                     stream.input_stream.stream().size() == end else "{}-{}/{}"
-                     .format(start, end,
-                             stream.input_stream.stream().size()).encode()) +
+                     stream.input_stream.stream().size() == end else f"{start}-{end}/{stream.input_stream.stream().size()}"
+                     .encode()) +
                     b"\r\n")
         client.send(b"Content-Type: audio/ogg\r\n")
         client.send(b"\r\n")

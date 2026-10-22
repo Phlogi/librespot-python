@@ -36,20 +36,37 @@ For other guidelines, please see [CODE_OF_CONDUCT.md](https://github.com/kokarar
 
 ### Prerequisites
 
-- [Python](https://python.org/)
+- [Python](https://python.org/) 3.11+
+- [uv](https://docs.astral.sh/uv/) (recommended for development)
 
 ### Installation
 
-Stable Version
+From this fork (private repository, SSH access required):
 
 ```commandline
-pip install librespot
+pip install "git+ssh://git@github.com/Phlogi/librespot-python.git@retry-connection"
 ```
 
-Snapshot Version \***Recommended**
+From a local checkout:
 
 ```commandline
-pip install git+https://github.com/kokarare1212/librespot-python
+uv pip install /path/to/librespot-python
+```
+
+The `librespot` package on PyPI tracks upstream and does not include the
+reconnect/retry work from this fork.
+
+### Development
+
+```commandline
+uv sync --extra dev
+uv run pytest
+uv run ruff check
+uv run pyright
+```
+
+If you change the vendored `.proto` schemas, regenerate the modules and stubs with
+`uv run --extra proto python scripts/generate_proto_stubs.py` (see `CONTRIBUTING.md`).
 ```
 
 ## Usage

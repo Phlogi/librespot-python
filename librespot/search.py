@@ -43,7 +43,7 @@ class SearchManager:
         """ """
 
         def __init__(self, status_code: int):
-            super().__init__("Search failed with code {}.".format(status_code))
+            super().__init__(f"Search failed with code {status_code}.")
 
     class SearchRequest:
         """ """

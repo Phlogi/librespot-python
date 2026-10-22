@@ -1,9 +1,10 @@
+# pyright: reportAttributeAccessIssue=false, reportArgumentType=false
 """Unit tests for DealerClient listener management and dispatch routing."""
 from __future__ import annotations
 
 import threading
 import typing
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from requests.structures import CaseInsensitiveDict
@@ -111,7 +112,7 @@ class TestMessageDispatch:
         dealer._DealerClient__worker.shutdown(wait=True)
 
         assert len(listener.messages) == 1
-        uri, headers, payload = listener.messages[0]
+        uri, _headers, _payload = listener.messages[0]
         assert uri == "hm://connect-state/v1/connect/update"
 
     def test_no_dispatch_for_non_matching_uri(self, dealer: DealerClient):

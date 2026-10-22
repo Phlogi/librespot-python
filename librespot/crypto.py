@@ -1,11 +1,14 @@
 from __future__ import annotations
-from Cryptodome import Random
-from librespot import util
+
 import io
 import re
 import struct
 import threading
 import typing
+
+from Cryptodome import Random
+
+from librespot import util
 
 if typing.TYPE_CHECKING:
     from librespot.core import Session
@@ -70,20 +73,12 @@ class CipherPair:
             expected_mac = self.__receive_cipher.finish(4)
             if mac != expected_mac:
                 raise RuntimeError(
-                    "Packet MAC mismatch at receive nonce {}: cmd=0x{}, "
-                    "payload_length={}".format(
-                        receive_nonce,
-                        util.bytes_to_hex(cmd),
-                        payload_length,
-                    ))
+                    f"Packet MAC mismatch at receive nonce {receive_nonce}: cmd=0x{util.bytes_to_hex(cmd)}, "
+                    f"payload_length={payload_length}")
             return Packet(cmd, payload_bytes)
         except (IndexError, OSError) as ex:
             raise RuntimeError(
-                "Failed to receive packet at receive nonce {}: {}: {}".format(
-                    receive_nonce,
-                    type(ex).__name__,
-                    ex,
-                )) from ex
+                f"Failed to receive packet at receive nonce {receive_nonce}: {type(ex).__name__}: {ex}") from ex
 
 
 class DiffieHellman:
@@ -184,7 +179,7 @@ class Packet:
         unknown_0x10 = b"\x10"
 
         @staticmethod
-        def parse(val: typing.Union[bytes, None]) -> typing.Union[bytes, None]:
+        def parse(val: bytes | None) -> bytes | None:
             for cmd in [
                     Packet.Type.__dict__[attr] for attr in Packet.Type.__dict__
                     if re.search("__.+?__", attr) is None
@@ -303,7 +298,7 @@ class Shannon:
         self.save_state()
         self.nbuf = 0
 
-    def nonce(self, nonce: typing.Union[bytes, int]) -> None:
+    def nonce(self, nonce: bytes | int) -> None:
         if isinstance(nonce, int):
             nonce = bytes(struct.pack(">I", nonce))
         self.reload_state()
@@ -312,7 +307,7 @@ class Shannon:
         self.gen_konst()
         self.nbuf = 0
 
-    def encrypt(self, buffer: bytes, n: typing.Optional[int] = None) -> bytes:
+    def encrypt(self, buffer: bytes, n: int | None = None) -> bytes:
         if n is None:
             return self.encrypt(buffer, len(buffer))
         buf = bytearray(buffer)
@@ -356,7 +351,7 @@ class Shannon:
                 n -= 1
         return bytes(buf)
 
-    def decrypt(self, buffer: bytes, n: typing.Optional[int] = None) -> bytes:
+    def decrypt(self, buffer: bytes, n: int | None = None) -> bytes:
         if n is None:
             return self.decrypt(buffer, len(buffer))
         buf = bytearray(buffer)

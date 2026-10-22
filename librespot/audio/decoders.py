@@ -1,11 +1,13 @@
 from __future__ import annotations
+
+import collections.abc
+import enum
+import logging
+
 from librespot.audio import SuperAudioFormat
 from librespot.proto import Metadata_pb2 as Metadata
 from librespot.proto.Metadata_pb2 import AudioFile
 from librespot.structure import AudioQualityPicker
-import enum
-import logging
-import typing
 
 
 class AudioQuality(enum.Enum):
@@ -40,10 +42,10 @@ class AudioQuality(enum.Enum):
                 AudioFile.FLAC_FLAC_24BIT,
         ]:
             return AudioQuality.LOSSLESS
-        raise RuntimeError("Unknown format: {}".format(audio_format))
+        raise RuntimeError(f"Unknown format: {audio_format}")
 
     def get_matches(self,
-                    files: typing.List[AudioFile]) -> typing.List[AudioFile]:
+                    files: collections.abc.Sequence[AudioFile]) -> list[AudioFile]:
         file_list = []
         for file in files:
             if hasattr(file, "format") and AudioQuality.get_quality(
@@ -64,16 +66,16 @@ class FormatOnlyAudioQuality(AudioQualityPicker):
         self.format_filter = format_filter
 
     @staticmethod
-    def get_file_by_format(files: typing.List[Metadata.AudioFile],
-                           format_type: SuperAudioFormat) -> typing.Optional[Metadata.AudioFile]:
+    def get_file_by_format(files: collections.abc.Sequence[Metadata.AudioFile],
+                           format_type: SuperAudioFormat) -> Metadata.AudioFile | None:
         for file in files:
             if file.HasField("format") and SuperAudioFormat.get(
                     file.format) == format_type:
                 return file
         return None
 
-    def get_file(self, files: typing.List[Metadata.AudioFile]) -> typing.Optional[Metadata.AudioFile]:
-        quality_matches: typing.List[Metadata.AudioFile] = self.preferred.get_matches(files)
+    def get_file(self, files: collections.abc.Sequence[Metadata.AudioFile]) -> Metadata.AudioFile | None:
+        quality_matches = self.preferred.get_matches(files)
 
         selected_file = self.get_file_by_format(quality_matches, self.format_filter)
 
@@ -84,10 +86,7 @@ class FormatOnlyAudioQuality(AudioQualityPicker):
             if selected_file is not None:
                 # Found format match (different quality than preferred)
                 self.logger.warning(
-                    "Using {} format file with {} quality because preferred {} quality couldn't be found.".format(
-                        self.format_filter.name,
-                        AudioQuality.get_quality(selected_file.format).name,
-                        self.preferred.name))
+                    f"Using {self.format_filter.name} format file with {AudioQuality.get_quality(selected_file.format).name} quality because preferred {self.preferred.name} quality couldn't be found.")
             else:
                 available_formats = [SuperAudioFormat.get(f.format).name
                                    for f in files if f.HasField("format")]
@@ -108,7 +107,7 @@ class VorbisOnlyAudioQuality(FormatOnlyAudioQuality):
         super().__init__(preferred, SuperAudioFormat.VORBIS)
 
     @staticmethod
-    def get_vorbis_file(files: typing.List[Metadata.AudioFile]) -> typing.Optional[Metadata.AudioFile]:
+    def get_vorbis_file(files: collections.abc.Sequence[Metadata.AudioFile]) -> Metadata.AudioFile | None:
         return FormatOnlyAudioQuality.get_file_by_format(files, SuperAudioFormat.VORBIS)
 
 class LosslessOnlyAudioQuality(FormatOnlyAudioQuality):
@@ -118,5 +117,5 @@ class LosslessOnlyAudioQuality(FormatOnlyAudioQuality):
         super().__init__(preferred, SuperAudioFormat.FLAC)
 
     @staticmethod
-    def get_flac_file(files: typing.List[Metadata.AudioFile]) -> typing.Optional[Metadata.AudioFile]:
+    def get_flac_file(files: collections.abc.Sequence[Metadata.AudioFile]) -> Metadata.AudioFile | None:
         return FormatOnlyAudioQuality.get_file_by_format(files, SuperAudioFormat.FLAC)

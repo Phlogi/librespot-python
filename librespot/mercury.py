@@ -1,9 +1,5 @@
 from __future__ import annotations
-from librespot import util
-from librespot.crypto import Packet
-from librespot.proto import Mercury_pb2 as Mercury, Pubsub_pb2 as Pubsub
-from librespot.structure import Closeable, PacketsReceiver, SubListener
-from requests.structures import CaseInsensitiveDict
+
 import io
 import json
 import logging
@@ -11,6 +7,14 @@ import queue
 import struct
 import threading
 import typing
+
+from requests.structures import CaseInsensitiveDict
+
+from librespot import util
+from librespot.crypto import Packet
+from librespot.proto import Mercury_pb2 as Mercury
+from librespot.proto import Pubsub_pb2 as Pubsub
+from librespot.structure import Closeable, PacketsReceiver, SubListener
 
 if typing.TYPE_CHECKING:
     from librespot.core import Session
@@ -26,13 +30,13 @@ class JsonMercuryRequest:
 class MercuryClient(Closeable, PacketsReceiver):
     logger = logging.getLogger("Librespot:MercuryClient")
     mercury_request_timeout = 3
-    __callbacks: typing.Dict[int, Callback]
+    __callbacks: dict[int, Callback]
     __remove_callback_lock: threading.Condition
-    __partials: typing.Dict[int, typing.List[bytes]]
+    __partials: dict[int, list[bytes]]
     __seq_holder: int
     __seq_holder_lock: threading.Condition
     __session: Session
-    __subscriptions: typing.List[InternalSubListener]
+    __subscriptions: list[InternalSubListener]
     __subscriptions_lock: threading.Condition
 
     def __init__(self, session: Session):
@@ -75,7 +79,7 @@ class MercuryClient(Closeable, PacketsReceiver):
         elif seq_length == 8:
             seq = struct.unpack(">q", payload.read(8))[0]
         else:
-            raise RuntimeError("Unknown seq length: {}".format(seq_length))
+            raise RuntimeError(f"Unknown seq length: {seq_length}")
         flags = payload.read(1)
         parts = struct.unpack(">H", payload.read(2))[0]
         partial = self.__partials.get(seq)
@@ -83,8 +87,7 @@ class MercuryClient(Closeable, PacketsReceiver):
             partial = []
             self.__partials[seq] = partial
         self.logger.debug(
-            "Handling packet, cmd: 0x{}, seq: {}, flags: {}, parts: {}".format(
-                util.bytes_to_hex(packet.cmd), seq, flags, parts))
+            f"Handling packet, cmd: 0x{util.bytes_to_hex(packet.cmd)}, seq: {seq}, flags: {flags}, parts: {parts}")
         for _ in range(parts):
             size = struct.unpack(">H", payload.read(2))[0]
             buffer = payload.read(size)
@@ -105,9 +108,8 @@ class MercuryClient(Closeable, PacketsReceiver):
                         dispatched = True
             if not dispatched:
                 self.logger.debug(
-                    "Couldn't dispatch Mercury event seq: {}, uri: {}, code: {}, payload: {}"
-                    .format(seq, header.uri, header.status_code,
-                            response.payload))
+                    f"Couldn't dispatch Mercury event seq: {seq}, uri: {header.uri}, code: {header.status_code}, payload: {response.payload}"
+                    )
         elif (packet.is_cmd(Packet.Type.mercury_req)
               or packet.is_cmd(Packet.Type.mercury_sub)
               or packet.is_cmd(Packet.Type.mercury_unsub)):
@@ -116,14 +118,12 @@ class MercuryClient(Closeable, PacketsReceiver):
                 callback.response(response)
             else:
                 self.logger.warning(
-                    "Skipped Mercury response, seq: {}, uri: {}, code: {}".
-                    format(seq, response.uri, response.status_code))
+                    f"Skipped Mercury response, seq: {seq}, uri: {response.uri}, code: {response.status_code}")
             with self.__remove_callback_lock:
                 self.__remove_callback_lock.notify_all()
         else:
             self.logger.warning(
-                "Couldn't handle packet, seq: {}, uri: {}, code: {}".format(
-                    seq, header.uri, header.status_code))
+                f"Couldn't handle packet, seq: {seq}, uri: {header.uri}, code: {header.status_code}")
 
     def interested_in(self, uri: str, listener: SubListener) -> None:
         with self.__subscriptions_lock:
@@ -155,8 +155,7 @@ class MercuryClient(Closeable, PacketsReceiver):
             seq = self.__seq_holder
             self.__seq_holder += 1
         self.logger.debug(
-            "Send Mercury request, seq: {}, uri: {}, method: {}".format(
-                seq, request.header.uri, request.header.method))
+            f"Send Mercury request, seq: {seq}, uri: {request.header.uri}, method: {request.header.method}")
         buffer.write(struct.pack(">H", 4))
         buffer.write(struct.pack(">i", seq))
         buffer.write(b"\x01")
@@ -186,12 +185,11 @@ class MercuryClient(Closeable, PacketsReceiver):
         try:
             response = callback.wait_response()
             if response is None:
-                raise IOError(
-                    "Request timeout out, {} passed, yet no response. seq: {}".
-                    format(self.mercury_request_timeout, seq))
+                raise OSError(
+                    f"Request timeout out, {self.mercury_request_timeout} passed, yet no response. seq: {seq}")
             return response
         except queue.Empty as e:
-            raise IOError(e)
+            raise OSError(e) from e
 
     def send_sync_json(self, request: JsonMercuryRequest) -> typing.Any:
         response = self.send_sync(request.request)
@@ -211,15 +209,14 @@ class MercuryClient(Closeable, PacketsReceiver):
             raise RuntimeError(response)
         with self.__subscriptions_lock:
             if len(response.payload) > 0:
-                for payload in response.payload:
-                    sub = Pubsub.Subscription()
-                    sub.ParseFromString(payload)
-                    self.__subscriptions.append(
-                        MercuryClient.InternalSubListener(sub.uri, listener, True))
+                sub = Pubsub.Subscription()
+                sub.ParseFromString(response.payload)
+                self.__subscriptions.append(
+                    MercuryClient.InternalSubListener(sub.uri, listener, True))
             else:
                 self.__subscriptions.append(
                     MercuryClient.InternalSubListener(uri, listener, True))
-        self.logger.debug("Subscribed successfully to {}!".format(uri))
+        self.logger.debug(f"Subscribed successfully to {uri}!")
 
     def unsubscribe(self, uri) -> None:
         """
@@ -235,7 +232,7 @@ class MercuryClient(Closeable, PacketsReceiver):
                 if subscription.matches(uri):
                     self.__subscriptions.remove(subscription)
                     break
-        self.logger.debug("Unsubscribed successfully from {}!".format(uri))
+        self.logger.debug(f"Unsubscribed successfully from {uri}!")
 
     class Callback:
         def response(self, response: MercuryClient.Response) -> None:
@@ -273,7 +270,7 @@ class MercuryClient(Closeable, PacketsReceiver):
         code: int
 
         def __init__(self, response: MercuryClient.Response):
-            super().__init__("status: {}".format(response.status_code))
+            super().__init__(f"status: {response.status_code}")
             self.code = response.status_code
 
     class PubSubException(MercuryException):
@@ -321,16 +318,15 @@ class MercuryRequests:
     def request_token(device_id, scope):
         return JsonMercuryRequest(
             RawMercuryRequest.get(
-                "hm://keymaster/token/authenticated?scope={}&client_id={}&device_id={}"
-                .format(scope, MercuryRequests.keymaster_client_id,
-                        device_id)))
+                f"hm://keymaster/token/authenticated?scope={scope}&client_id={MercuryRequests.keymaster_client_id}&device_id={device_id}"
+                ))
 
 
 class RawMercuryRequest:
     header: Mercury.Header
-    payload: typing.List[bytes]
+    payload: list[bytes]
 
-    def __init__(self, header: Mercury.Header, payload: typing.List[bytes]):
+    def __init__(self, header: Mercury.Header, payload: list[bytes]):
         self.header = header
         self.payload = payload
 
@@ -365,7 +361,7 @@ class RawMercuryRequest:
 
     class Builder:
         header_dict: CaseInsensitiveDict
-        payload: typing.List[bytes]
+        payload: list[bytes]
 
         def __init__(self):
             self.header_dict = CaseInsensitiveDict()
@@ -384,9 +380,9 @@ class RawMercuryRequest:
             return self
 
         def add_user_field(self,
-                           field: Mercury.UserField = None,
-                           key: typing.Optional[str] = None,
-                           value: typing.Optional[str] = None):
+                           field: Mercury.UserField | None = None,
+                           key: str | None = None,
+                           value: str | None = None):
             if field is None and (key is None or value is None):
                 return self
             try:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
 import io
 import json
 import logging
@@ -16,39 +17,29 @@ import defusedxml.ElementTree
 import requests
 from Cryptodome import Random
 from Cryptodome.Cipher import AES
-from Cryptodome.Hash import HMAC
-from Cryptodome.Hash import SHA1
+from Cryptodome.Hash import HMAC, SHA1
 from Cryptodome.Protocol.KDF import PBKDF2
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Signature import PKCS1_v1_5
 from requests.structures import CaseInsensitiveDict
 
-from librespot import util
-from librespot import Version
-from librespot.audio import AudioKeyManager
-from librespot.audio import CdnManager
-from librespot.audio import PlayableContentFeeder
+from librespot import Version, util
+from librespot.api import ApiClient
+from librespot.apresolver import ApResolver
+from librespot.audio import AudioKeyManager, CdnManager, PlayableContentFeeder
 from librespot.audio.storage import ChannelManager
 from librespot.cache import CacheManager
-from librespot.crypto import CipherPair
-from librespot.crypto import DiffieHellman
-from librespot.crypto import Packet
-from librespot.mercury import MercuryClient
-from librespot.mercury import MercuryRequests
+from librespot.crypto import CipherPair, DiffieHellman, Packet
+from librespot.dealer_client import DealerClient
+from librespot.event_service import EventService
+from librespot.mercury import MercuryClient, MercuryRequests
 from librespot.oauth import OAuth
 from librespot.proto import Authentication_pb2 as Authentication
 from librespot.proto import Connect_pb2 as Connect
 from librespot.proto import Keyexchange_pb2 as Keyexchange
 from librespot.proto.ExplicitContentPubsub_pb2 import UserAttributesUpdate
-from librespot.structure import Closeable
-from librespot.structure import MessageListener
-from librespot.structure import SubListener
-
-from librespot.api import ApiClient
-from librespot.apresolver import ApResolver
-from librespot.dealer_client import DealerClient
-from librespot.event_service import EventService
 from librespot.search import SearchManager
+from librespot.structure import Closeable, MessageListener, SubListener
 from librespot.token_provider import TokenProvider
 
 # ── Module-level constants ──────────────────────────────────────────────────────
@@ -178,10 +169,8 @@ class _ConnectionHolder:
 
     def close(self) -> None:
         """Close the connection"""
-        try:
+        with contextlib.suppress(OSError):
             self.__socket.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
         self.__socket.close()
 
     def flush(self) -> None:
@@ -208,8 +197,8 @@ class _ConnectionHolder:
             if not chunk:
                 received = length - remaining
                 raise ConnectionError(
-                    "Connection closed: expected {} bytes, "
-                    "got {}".format(length, received))
+                    f"Connection closed: expected {length} bytes, "
+                    f"got {received}")
             pieces.append(chunk)
             remaining -= len(chunk)
         return b"".join(pieces)
@@ -274,7 +263,7 @@ class _Inner:
     device_type: int
     device_name: str
     device_id: str
-    conf: typing.Optional[_Configuration] = None
+    conf: _Configuration | None = None
     preferred_locale: str
 
     def __init__(
@@ -283,7 +272,7 @@ class _Inner:
         device_name: str,
         preferred_locale: str,
         conf: _Configuration,
-        device_id: typing.Optional[str] = None,
+        device_id: str | None = None,
     ):
         self.preferred_locale = preferred_locale
         self.conf = conf
@@ -448,7 +437,7 @@ class _Receiver:
         self.__session.logger.info("Session.Receiver started")
         while self.__running:
             packet: Packet
-            cmd: typing.Optional[bytes]
+            cmd: bytes | None
             try:
                 cp = self.__session.cipher_pair
                 conn = self.__session.connection
@@ -460,9 +449,7 @@ class _Receiver:
                 cmd = Packet.Type.parse(packet.cmd)
                 if cmd is None:
                     self.__session.logger.debug(
-                        "Skipping unknown command cmd: 0x{}, payload: {}".
-                        format(util.bytes_to_hex(packet.cmd),
-                               packet.payload))
+                        f"Skipping unknown command cmd: 0x{util.bytes_to_hex(packet.cmd)}, payload: {packet.payload}")
                     continue
             except (RuntimeError, ConnectionError) as ex:
                 if self.__running:
@@ -500,8 +487,7 @@ class _Receiver:
             elif cmd == Packet.Type.country_code:
                 self.__session.country_code = packet.payload.decode()
                 self.__session.logger.info(
-                    "Received country_code: {}".format(
-                        self.__session.country_code))
+                    f"Received country_code: {self.__session.country_code}")
             elif cmd == Packet.Type.license_version:
                 license_version = io.BytesIO(packet.payload)
                 license_id = struct.unpack(">h",
@@ -509,18 +495,15 @@ class _Receiver:
                 if license_id != 0:
                     buffer = license_version.read()
                     self.__session.logger.info(
-                        "Received license_version: {}, {}".format(
-                            license_id, buffer.decode()))
+                        f"Received license_version: {license_id}, {buffer.decode()}")
                 else:
                     self.__session.logger.info(
-                        "Received license_version: {}".format(license_id))
+                        f"Received license_version: {license_id}")
             elif cmd == Packet.Type.unknown_0x10:
-                self.__session.logger.debug("Received 0x10: {}".format(
-                    util.bytes_to_hex(packet.payload)))
+                self.__session.logger.debug(f"Received 0x10: {util.bytes_to_hex(packet.payload)}")
             elif cmd == Packet.Type.preferred_locale_ack:
                 self.__session.logger.debug(
-                    "Received preferred_locale_ack: {}".format(
-                        util.bytes_to_hex(packet.payload)))
+                    f"Received preferred_locale_ack: {util.bytes_to_hex(packet.payload)}")
             elif cmd in [
                     Packet.Type.mercury_sub,
                     Packet.Type.mercury_unsub,
@@ -537,8 +520,7 @@ class _Receiver:
             elif cmd == Packet.Type.product_info:
                 self.__session.parse_product_info(packet.payload)
             else:
-                self.__session.logger.info("Skipping {}".format(
-                    util.bytes_to_hex(cmd)))
+                self.__session.logger.info(f"Skipping {util.bytes_to_hex(cmd)}")
 
 
 class _SpotifyAuthenticationException(Exception):
@@ -551,30 +533,30 @@ class _SpotifyAuthenticationException(Exception):
 
 class _AbsBuilder:
     """ """
-    conf: typing.Optional[_Configuration] = None
-    device_id: typing.Optional[str] = None
+    conf: _Configuration | None = None
+    device_id: str | None = None
     device_name: str = "librespot-python"
     device_type: int = _protobuf_enum_value(Connect.DeviceType, "COMPUTER")
     preferred_locale: str = "en"
 
-    def __init__(self, conf: typing.Optional[_Configuration] = None):
+    def __init__(self, conf: _Configuration | None = None):
         if conf is None:
             self.conf = _Configuration.Builder().build()
         else:
             self.conf = conf
 
-    def set_preferred_locale(self, locale: str) -> _AbsBuilder:
+    def set_preferred_locale(self, locale: str) -> typing.Self:
         """
 
         :param locale: str:
 
         """
         if len(locale) != 2:
-            raise TypeError("Invalid locale: {}".format(locale))
+            raise TypeError(f"Invalid locale: {locale}")
         self.preferred_locale = locale
         return self
 
-    def set_device_name(self, device_name: str) -> _AbsBuilder:
+    def set_device_name(self, device_name: str) -> typing.Self:
         """
 
         :param device_name: str:
@@ -583,7 +565,7 @@ class _AbsBuilder:
         self.device_name = device_name
         return self
 
-    def set_device_id(self, device_id: str) -> _AbsBuilder:
+    def set_device_id(self, device_id: str) -> typing.Self:
         """
 
         :param device_id: str:
@@ -595,7 +577,7 @@ class _AbsBuilder:
         return self
 
     def set_device_type(
-            self, device_type: int) -> _AbsBuilder:
+            self, device_type: int) -> typing.Self:
         """
 
         :param device_type: Connect.DeviceType:
@@ -607,7 +589,7 @@ class _AbsBuilder:
 
 class _Builder(_AbsBuilder):
     """ """
-    login_credentials: typing.Optional[typing.Any] = None
+    login_credentials: typing.Any | None = None
 
     def blob(self, username: str, blob: bytes) -> _Builder:
         """
@@ -646,9 +628,9 @@ class _Builder(_AbsBuilder):
         key = sha1.digest() + b"\x00\x00\x00\x14"
         aes = AES.new(key, AES.MODE_ECB)
         decrypted_blob = bytearray(aes.decrypt(encrypted_blob))
-        l = len(decrypted_blob)
-        for i in range(0, l - 0x10):
-            decrypted_blob[l - i - 1] ^= decrypted_blob[l - i - 0x11]
+        length = len(decrypted_blob)
+        for i in range(0, length - 0x10):
+            decrypted_blob[length - i - 1] ^= decrypted_blob[length - i - 0x11]
         blob = io.BytesIO(decrypted_blob)
         blob.read(1)
         le = self.read_blob_int(blob)
@@ -657,12 +639,12 @@ class _Builder(_AbsBuilder):
         type_int = self.read_blob_int(blob)
         type_ = Authentication.AuthenticationType.Name(type_int)
         if type_ is None:
-            raise IOError(
+            raise OSError(
                 TypeError(
-                    "Unknown AuthenticationType: {}".format(type_int)))
+                    f"Unknown AuthenticationType: {type_int}"))
         blob.read(1)
-        l = self.read_blob_int(blob)
-        auth_data = blob.read(l)
+        length = self.read_blob_int(blob)
+        auth_data = blob.read(length)
         return _protobuf_message(
             Authentication.LoginCredentials,
             auth_data=auth_data,
@@ -691,12 +673,36 @@ class _Builder(_AbsBuilder):
         """
         try:
             obj = json.loads(base64.b64decode(stored_credentials_str))
-        except binascii.Error:
-            pass
-        except json.JSONDecodeError:
-            pass
-        else:
+        except (binascii.Error, json.JSONDecodeError):
+            return self
+        with contextlib.suppress(KeyError):
+            self.login_credentials = _protobuf_message(
+                Authentication.LoginCredentials,
+                typ=Authentication.AuthenticationType.Value(
+                    obj["type"]),
+                username=obj["username"],
+                auth_data=base64.b64decode(obj["credentials"]),
+            )
+        return self
+
+    def stored_file(self,
+                    stored_credentials: str | None = None) -> _Builder:
+        """Create credential from stored file
+
+        :param stored_credentials: str:  (Default value = None)
+        :returns: Builder
+
+        """
+        if stored_credentials is None and self.conf is not None:
+            stored_credentials = self.conf.stored_credentials_file
+        if stored_credentials is not None and os.path.isfile(stored_credentials):
             try:
+                with open(stored_credentials) as f:
+                    obj = json.load(f)
+            except json.JSONDecodeError:
+                return self
+            try:
+                # Try Python librespot format first
                 self.login_credentials = _protobuf_message(
                     Authentication.LoginCredentials,
                     typ=Authentication.AuthenticationType.Value(
@@ -705,47 +711,14 @@ class _Builder(_AbsBuilder):
                     auth_data=base64.b64decode(obj["credentials"]),
                 )
             except KeyError:
-                pass
-        return self
-
-    def stored_file(self,
-                    stored_credentials: typing.Optional[str] = None) -> _Builder:
-        """Create credential from stored file
-
-        :param stored_credentials: str:  (Default value = None)
-        :returns: Builder
-
-        """
-        if stored_credentials is None:
-            if self.conf is not None:
-                stored_credentials = self.conf.stored_credentials_file
-        if stored_credentials is not None and os.path.isfile(stored_credentials):
-            try:
-                with open(stored_credentials) as f:
-                    obj = json.load(f)
-            except json.JSONDecodeError:
-                pass
-            else:
-                try:
-                    # Try Python librespot format first
+                # Try Rust librespot format (auth_type as int, auth_data instead of credentials)
+                with contextlib.suppress(KeyError):
                     self.login_credentials = _protobuf_message(
                         Authentication.LoginCredentials,
-                        typ=Authentication.AuthenticationType.Value(
-                            obj["type"]),
+                        typ=obj["auth_type"],
                         username=obj["username"],
-                        auth_data=base64.b64decode(obj["credentials"]),
+                        auth_data=base64.b64decode(obj["auth_data"]),
                     )
-                except KeyError:
-                    # Try Rust librespot format (auth_type as int, auth_data instead of credentials)
-                    try:
-                        self.login_credentials = _protobuf_message(
-                            Authentication.LoginCredentials,
-                            typ=obj["auth_type"],
-                            username=obj["username"],
-                            auth_data=base64.b64decode(obj["auth_data"]),
-                        )
-                    except KeyError:
-                        pass
         return self
 
     def oauth(self, oauth_url_callback, success_page_content = None) -> _Builder:
@@ -794,7 +767,7 @@ class _Builder(_AbsBuilder):
             raise RuntimeError("You must select an authentication method.")
 
         max_attempts = int(os.getenv(_RETRY_ATTEMPTS_ENV, str(_DEFAULT_RETRY_ATTEMPTS)))
-        last_exception: typing.Optional[Exception] = None
+        last_exception: Exception | None = None
         logger = logging.getLogger("Librespot:Session")
 
         ap_pool = ApResolver.get_accesspoint_pool()
@@ -808,7 +781,7 @@ class _Builder(_AbsBuilder):
             ap_address = ap_pool[ap_index]
             ap_index += 1
 
-            session: typing.Optional[Session] = None
+            session: Session | None = None
             try:
                 assert self.conf is not None, "Configuration not set"
                 session = Session(
@@ -829,10 +802,8 @@ class _Builder(_AbsBuilder):
             except Exception as ex:
                 last_exception = ex
                 if session is not None:
-                    try:
+                    with contextlib.suppress(Exception):
                         session.close()
-                    except Exception:
-                        pass
                 if attempt < max_attempts:
                     delay = min(2 ** attempt, _BACKOFF_CAP_SECONDS)
                     logger.warning(
@@ -861,29 +832,29 @@ class Session(Closeable, MessageListener, SubListener):
     Receiver = _Receiver
     SpotifyAuthenticationException = _SpotifyAuthenticationException
 
-    cipher_pair: typing.Union[CipherPair, None]
+    cipher_pair: CipherPair | None
     country_code: str = "EN"
-    connection: typing.Union[_ConnectionHolder, None]
+    connection: _ConnectionHolder | None
     logger = logging.getLogger("Librespot:Session")
-    scheduled_reconnect: typing.Union[threading.Timer, None]
+    scheduled_reconnect: threading.Timer | None
     __api: ApiClient
     __ap_welcome: typing.Any
-    __audio_key_manager: typing.Union[AudioKeyManager, None] = None
+    __audio_key_manager: AudioKeyManager | None = None
     __auth_lock: threading.Condition
     __auth_lock_bool: bool
-    __cache_manager: typing.Union[CacheManager, None]
-    __cdn_manager: typing.Union[CdnManager, None]
-    __channel_manager: typing.Union[ChannelManager, None] = None
-    __client: typing.Union[requests.Session, None]
+    __cache_manager: CacheManager | None
+    __cdn_manager: CdnManager | None
+    __channel_manager: ChannelManager | None = None
+    __client: requests.Session | None
     __closed: bool
     __closing: bool
-    __content_feeder: typing.Union[PlayableContentFeeder, None]
-    __dealer_client: typing.Union[DealerClient, None] = None
-    __event_service: typing.Union[EventService, None] = None
+    __content_feeder: PlayableContentFeeder | None
+    __dealer_client: DealerClient | None = None
+    __event_service: EventService | None = None
     __keys: DiffieHellman
     __mercury_client: MercuryClient
-    __receiver: typing.Union[_Receiver, None] = None
-    __search: typing.Union[SearchManager, None]
+    __receiver: _Receiver | None = None
+    __search: SearchManager | None
     __server_key = (b"\xac\xe0F\x0b\xff\xc20\xaf\xf4k\xfe\xc3\xbf\xbf\x86="
                     b"\xa1\x91\xc6\xcc3l\x93\xa1O\xb3\xb0\x16\x12\xac\xacj"
                     b"\xf1\x80\xe7\xf6\x14\xd9B\x9d\xbe.4fC\xe3b\xd22z\x1a"
@@ -900,8 +871,8 @@ class Session(Closeable, MessageListener, SubListener):
                     b"\x9d\xb3\x08l\x19\x0eH\xb3\x9df\xeb\x00\x06\xa2Z\xee\xa1"
                     b"\x1b\x13\x87<\xd7\x19\xe6U\xbd")
     __stored_str: str
-    __token_provider: typing.Union[TokenProvider, None]
-    __user_attributes: typing.Dict[str, str]
+    __token_provider: TokenProvider | None
+    __user_attributes: dict[str, str]
 
     def __init__(self, inner: _Inner, address: str) -> None:
         assert inner.conf is not None, "Configuration not set"
@@ -917,8 +888,7 @@ class Session(Closeable, MessageListener, SubListener):
         self.connection = _ConnectionHolder.create(address, None)
         self.__inner = inner
         self.__keys = DiffieHellman()
-        self.logger.info("Created new session! device_id: {}, ap: {}".format(
-            inner.device_id, address))
+        self.logger.info(f"Created new session! device_id: {inner.device_id}, ap: {address}")
 
     def api(self) -> ApiClient:
         """ """
@@ -965,8 +935,7 @@ class Session(Closeable, MessageListener, SubListener):
             self.__auth_lock_bool = False
             self.__auth_lock.notify_all()
         self.dealer().connect()
-        self.logger.info("Authenticated as {}!".format(
-            self.__ap_welcome.canonical_username))
+        self.logger.info(f"Authenticated as {self.__ap_welcome.canonical_username}!")
         self.mercury().interested_in("spotify:user:attributes:update", self)
         self.dealer().add_message_listener(
             self, [_CONNECT_LOGOUT_URI])
@@ -1000,8 +969,7 @@ class Session(Closeable, MessageListener, SubListener):
 
     def close(self) -> None:
         """Close instance"""
-        self.logger.info("Closing session. device_id: {}".format(
-            self.__inner.device_id))
+        self.logger.info(f"Closing session. device_id: {self.__inner.device_id}")
         self.__closing = True
         if self.scheduled_reconnect is not None:
             self.scheduled_reconnect.cancel()
@@ -1031,8 +999,7 @@ class Session(Closeable, MessageListener, SubListener):
             self.cipher_pair = None
             self.__closed = True
             self.__auth_lock.notify_all()
-        self.logger.info("Closed session. device_id: {}".format(
-            self.__inner.device_id))
+        self.logger.info(f"Closed session. device_id: {self.__inner.device_id}")
 
     def connect(self) -> None:
         """Connect to the Spotify Server"""
@@ -1070,13 +1037,13 @@ class Session(Closeable, MessageListener, SubListener):
             ap_response_message_length = self.connection.read_int()
         except ConnectionError as ex:
             raise ConnectionError(
-                "Access point {} closed the connection before sending "
-                "APResponseMessage length".format(self.connection.address())
+                f"Access point {self.connection.address()} closed the connection before sending "
+                "APResponseMessage length"
             ) from ex
         if ap_response_message_length < 4:
             raise ConnectionError(
-                "Access point {} sent invalid APResponseMessage length: {}"
-                .format(self.connection.address(), ap_response_message_length)
+                f"Access point {self.connection.address()} sent invalid APResponseMessage length: {ap_response_message_length}"
+
             )
         acc.write_int(ap_response_message_length)
         try:
@@ -1084,8 +1051,8 @@ class Session(Closeable, MessageListener, SubListener):
                 ap_response_message_length - 4)
         except ConnectionError as ex:
             raise ConnectionError(
-                "Access point {} closed the connection while sending "
-                "APResponseMessage body".format(self.connection.address())
+                f"Access point {self.connection.address()} closed the connection while sending "
+                "APResponseMessage body"
             ) from ex
         acc.write(ap_response_message_bytes)
         ap_response_message_proto = _protobuf_empty(
@@ -1142,7 +1109,7 @@ class Session(Closeable, MessageListener, SubListener):
                 failed = _protobuf_empty(Keyexchange.APResponseMessage)
                 failed.ParseFromString(payload)
                 raise RuntimeError(failed)
-        except (socket.timeout, ConnectionError):
+        except (TimeoutError, ConnectionError):
             pass
         finally:
             self.connection.set_timeout(0)
@@ -1199,10 +1166,9 @@ class Session(Closeable, MessageListener, SubListener):
             attributes_update.ParseFromString(resp.payload)
             for pair in attributes_update.pairs_list:
                 self.__user_attributes[pair.key] = pair.value
-                self.logger.info("Updated user attribute: {} -> {}".format(
-                    pair.key, pair.value))
+                self.logger.info(f"Updated user attribute: {pair.key} -> {pair.value}")
 
-    def get_user_attribute(self, key: str, fallback: typing.Optional[str] = None) -> typing.Optional[str]:
+    def get_user_attribute(self, key: str, fallback: str | None = None) -> str | None:
         """
 
         :param key: str:
@@ -1255,8 +1221,7 @@ class Session(Closeable, MessageListener, SubListener):
             text = product[i].text
             if text is not None:
                 self.__user_attributes[product[i].tag] = text
-        self.logger.debug("Parsed product info: {}".format(
-            self.__user_attributes))
+        self.logger.debug(f"Parsed product info: {self.__user_attributes}")
 
     def preferred_locale(self) -> str:
         """ """
@@ -1286,7 +1251,7 @@ class Session(Closeable, MessageListener, SubListener):
                 self.connection = None
 
             max_attempts = int(os.getenv(_RETRY_ATTEMPTS_ENV, str(_DEFAULT_RETRY_ATTEMPTS)))
-            last_exception: typing.Optional[Exception] = None
+            last_exception: Exception | None = None
             ap_pool: list[str] = []
             ap_index = 0
 
@@ -1315,16 +1280,13 @@ class Session(Closeable, MessageListener, SubListener):
                         ),
                         True,
                     )
-                    self.logger.info("Re-authenticated as {}!".format(
-                        self.__ap_welcome.canonical_username))
+                    self.logger.info(f"Re-authenticated as {self.__ap_welcome.canonical_username}!")
                     return
                 except Exception as ex:
                     last_exception = ex
                     if self.connection is not None:
-                        try:
+                        with contextlib.suppress(Exception):
                             self.connection.close()
-                        except Exception:
-                            pass
                         self.connection = None
                     if attempt < max_attempts:
                         delay = min(2 ** attempt, _BACKOFF_CAP_SECONDS)
@@ -1471,7 +1433,7 @@ class Session(Closeable, MessageListener, SubListener):
                         )
                 except OSError as ex:
                     self.logger.warning(
-                        "Failed to save credentials to file: {}".format(ex))
+                        f"Failed to save credentials to file: {ex}")
 
         elif packet.is_cmd(Packet.Type.auth_failure):
             ap_login_failed = _protobuf_empty(Keyexchange.APLoginFailed)

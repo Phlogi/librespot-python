@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false, reportArgumentType=false, reportOptionalMemberAccess=false
 """Unit tests for session socket read handling."""
 from __future__ import annotations
 

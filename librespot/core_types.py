@@ -25,4 +25,4 @@ class MessageType(enum.Enum):
             return MessageType.PONG
         if _typ == MessageType.REQUEST.value:
             return MessageType.REQUEST
-        raise TypeError("Unknown MessageType: {}".format(_typ))
+        raise TypeError(f"Unknown MessageType: {_typ}")

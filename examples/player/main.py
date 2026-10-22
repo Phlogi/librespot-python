@@ -8,13 +8,11 @@ import requests
 from requests.structures import CaseInsensitiveDict
 
 from librespot.audio.decoders import AudioQuality, VorbisOnlyAudioQuality
-from librespot.session import Session
 from librespot.metadata import TrackId
-
-import typing
+from librespot.session import Session
 
 quality: AudioQuality = AudioQuality.VERY_HIGH
-session: typing.Optional[Session] = None
+session: Session | None = None
 
 
 def clear():
@@ -57,7 +55,7 @@ def client():
                     quality = AudioQuality.HIGH
                 elif args[1] == "veryhigh" or args[1] == "320":
                     quality = AudioQuality.VERY_HIGH
-                print("Set Quality to %s" % quality.name)
+                print(f"Set Quality to {quality.name}")
                 wait()
         if (args[0] == "s" or args[0] == "search") and len(args) >= 2:
             token = session.tokens().get("user-read-email")
@@ -69,12 +67,12 @@ def client():
                     "q": cmd[2:],
                     "type": "track"
                 },
-                headers=CaseInsensitiveDict({"Authorization": "Bearer %s" % token}),
+                headers=CaseInsensitiveDict({"Authorization": f"Bearer {token}"}),
             )
             i = 1
             tracks = resp.json()["tracks"]["items"]
             for track in tracks:
-                print("%d, %s | %s" % (
+                print("{}, {} | {}".format(
                     i,
                     track["name"],
                     ",".join([artist["name"] for artist in track["artists"]]),
@@ -151,7 +149,7 @@ def main():
 
 def wait(seconds: int = 3):
     for i in range(seconds)[::-1]:
-        print("\rWait for %d second(s)..." % (i + 1), end="")
+        print(f"\rWait for {i + 1} second(s)...", end="")
         time.sleep(1)
 
 

@@ -1,0 +1,10 @@
+include LICENSE.txt
+include README.md
+include CONTRIBUTING.md
+include MIGRATION.md
+include pyproject.toml
+recursive-include proto *.proto
+recursive-include scripts *.py
+recursive-include tests *.py
+recursive-include docs *.md *.py
+recursive-include examples *.py

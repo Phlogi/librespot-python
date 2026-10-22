@@ -1,22 +1,31 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
-import random
 import secrets
 import urllib.parse
-import json
 from hashlib import sha256
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
-from librespot.proto import Authentication_pb2 as Authentication
+
 import requests
+
+from librespot.proto import Authentication_pb2 as Authentication
 
 
 class OAuth:
     logger = logging.getLogger("Librespot:OAuth")
     __spotify_auth = "https://accounts.spotify.com/authorize?response_type=code&client_id=%s&redirect_uri=%s&code_challenge=%s&code_challenge_method=S256&scope=%s&state=%s"
-    __scopes = ["app-remote-control", "playlist-modify", "playlist-modify-private", "playlist-modify-public", "playlist-read", "playlist-read-collaborative", "playlist-read-private", "streaming", "ugc-image-upload", "user-follow-modify", "user-follow-read", "user-library-modify", "user-library-read", "user-modify", "user-modify-playback-state", "user-modify-private", "user-personalized", "user-read-birthdate", "user-read-currently-playing", "user-read-email", "user-read-play-history", "user-read-playback-position", "user-read-playback-state", "user-read-private", "user-read-recently-played", "user-top-read"]
+    __scopes = (
+        "app-remote-control", "playlist-modify", "playlist-modify-private", "playlist-modify-public",
+        "playlist-read", "playlist-read-collaborative", "playlist-read-private", "streaming",
+        "ugc-image-upload", "user-follow-modify", "user-follow-read", "user-library-modify",
+        "user-library-read", "user-modify", "user-modify-playback-state", "user-modify-private",
+        "user-personalized", "user-read-birthdate", "user-read-currently-playing", "user-read-email",
+        "user-read-play-history", "user-read-playback-position", "user-read-playback-state",
+        "user-read-private", "user-read-recently-played", "user-top-read",
+    )
     __spotify_token = "https://accounts.spotify.com/api/token"
     __spotify_token_data: dict
     __client_id = ""
@@ -33,17 +42,14 @@ class OAuth:
         self.__redirect_url = redirect_url
         self.__oauth_url_callback = oauth_url_callback
         self.__spotify_token_data = {"grant_type": "authorization_code", "client_id": "", "redirect_uri": "", "code": "", "code_verifier": ""}
-    
+
     def set_success_page_content(self, content):
         self.__success_page_content = content
         return self
 
     def __generate_code_verifier(self):
         possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-        verifier = ""
-        for i in range(128):
-            verifier += secrets.choice(possible)
-        return verifier
+        return "".join(secrets.choice(possible) for _ in range(128))
 
     def __generate_code_challenge(self, code_verifier):
         digest = sha256(code_verifier.encode('utf-8')).digest()
@@ -71,9 +77,10 @@ class OAuth:
         request = requests.post(
             self.__spotify_token,
             data=request_data,
+            timeout=30,
         )
         if request.status_code != 200:
-            raise RuntimeError("Received status code %d: %s" % (request.status_code, request.reason))
+            raise RuntimeError(f"Received status code {request.status_code}: {request.reason}")
         try:
             self.__token = request.json()["access_token"]
         except (json.JSONDecodeError, KeyError) as ex:
