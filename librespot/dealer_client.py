@@ -110,6 +110,43 @@ class DealerClient(Closeable):
         self.__last_scheduled_reconnection = None
         self.connect()
 
+    @staticmethod
+    def __decode_payloads(payloads: typing.Any,
+                          headers: CaseInsensitiveDict[str]) -> typing.Any:
+        """Decode a dealer message's ``payloads`` field.
+
+        Spotify sends ``payloads`` as a JSON array with exactly one value.
+        Each value is either a base64 string, raw bytes, or inline JSON.
+        Older deployments sent the value directly, so accept a scalar too.
+        """
+        if payloads is None:
+            return b""
+        if not isinstance(payloads, list):
+            payloads = [payloads]
+        if not payloads:
+            return b""
+        if len(payloads) > 1:
+            raise ValueError(
+                f"payload had more than one value ({len(payloads)})")
+        payload = payloads[0]
+        content_type = headers.get("Content-Type")
+        if content_type == "application/json" or content_type == "plain/text":
+            return payload
+        if isinstance(payload, str):
+            try:
+                decoded = base64.b64decode(payload)
+            except Exception:
+                # Collection updates send plain JSON instead of base64.
+                return payload
+        elif isinstance(payload, (bytes, bytearray)):
+            decoded = bytes(payload)
+        else:
+            # Already-decoded JSON object/array.
+            return payload
+        if headers.get("Transfer-Encoding") == "gzip":
+            decoded = gzip.decompress(decoded)
+        return decoded
+
     def handle_message(self, obj: typing.Any) -> None:
         """
 
@@ -121,17 +158,15 @@ class DealerClient(Closeable):
             self.logger.warning("Received message with no uri, ignoring.")
             return
         headers = self.__get_headers(obj)
-        payloads = obj.get("payloads")
-        decoded_payloads: typing.Any
-        if payloads is not None:
-            if headers.get("Content-Type") == "application/json" or headers.get("Content-Type") == "plain/text":
-                decoded_payloads = payloads
-            else:
-                decoded_payloads = base64.b64decode(payloads)
-                if headers.get("Transfer-Encoding") == "gzip":
-                    decoded_payloads = gzip.decompress(decoded_payloads)
-        else:
-            decoded_payloads = b""
+        try:
+            decoded_payloads = self.__decode_payloads(obj.get("payloads"),
+                                                      headers)
+        except Exception:
+            self.logger.warning(
+                "Dropping dealer message with undecodable payload. [uri: %s]",
+                uri,
+                exc_info=True)
+            return
         interesting = False
         with self.__message_listeners_lock:
             for listener in self.__message_listeners:
@@ -292,19 +327,27 @@ class DealerClient(Closeable):
             :param text: str:
 
             """
-            obj = json.loads(text)
-            self.__dealer_client.wait_for_listener()
-            typ = MessageType.parse(obj.get("type"))
-            if typ == MessageType.MESSAGE:
-                self.__dealer_client.handle_message(obj)
-            elif typ == MessageType.REQUEST:
-                self.__dealer_client.handle_request(obj)
-            elif typ == MessageType.PONG:
-                self.__received_pong = True
-            elif typ == MessageType.PING:
-                pass
-            else:
-                raise RuntimeError(f"Unknown message type for {typ.value}")
+            try:
+                obj = json.loads(text)
+                self.__dealer_client.wait_for_listener()
+                typ = MessageType.parse(obj.get("type"))
+                if typ == MessageType.MESSAGE:
+                    self.__dealer_client.handle_message(obj)
+                elif typ == MessageType.REQUEST:
+                    self.__dealer_client.handle_request(obj)
+                elif typ == MessageType.PONG:
+                    self.__received_pong = True
+                elif typ == MessageType.PING:
+                    pass
+                else:
+                    raise RuntimeError(
+                        f"Unknown message type for {typ.value}")
+            except Exception:
+                # A single malformed/unsupported push must not tear down the
+                # websocket connection; drop it and keep the stream alive.
+                self.__dealer_client.logger.warning(
+                    "Failed to handle dealer message; ignoring.",
+                    exc_info=True)
 
         def on_open(self, ws: websocket.WebSocketApp):
             """

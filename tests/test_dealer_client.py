@@ -2,6 +2,8 @@
 """Unit tests for DealerClient listener management and dispatch routing."""
 from __future__ import annotations
 
+import base64
+import gzip
 import threading
 import typing
 from unittest.mock import MagicMock
@@ -138,6 +140,104 @@ class TestMessageDispatch:
         dealer._DealerClient__worker.shutdown(wait=True)
 
         assert len(listener.messages) == 0
+
+    def test_list_payload_is_base64_decoded(self, dealer: DealerClient):
+        listener = _TestMessageListener()
+        dealer.add_message_listener(listener, ["hm://herodotus/"])
+
+        raw = b"resume-point-revision"
+        msg = {
+            "uri": "hm://herodotus/uri/spotify:episode:x/resume-point-revision/y",
+            "headers": {"Content-Type": "application/octet-stream"},
+            "payloads": [base64.b64encode(raw).decode("ascii")],
+        }
+        dealer.handle_message(msg)
+        dealer._DealerClient__worker.shutdown(wait=True)
+
+        assert len(listener.messages) == 1
+        assert listener.messages[0][2] == raw
+
+    def test_list_payload_plain_json_falls_back_to_text(
+            self, dealer: DealerClient):
+        listener = _TestMessageListener()
+        dealer.add_message_listener(listener, ["hm://collection/"])
+
+        msg = {
+            "uri": "hm://collection/collection/user/json",
+            "headers": {"Content-Type": "application/octet-stream"},
+            "payloads": ['{"deleted": []}'],
+        }
+        dealer.handle_message(msg)
+        dealer._DealerClient__worker.shutdown(wait=True)
+
+        assert len(listener.messages) == 1
+        assert listener.messages[0][2] == '{"deleted": []}'
+
+    def test_list_payload_json_content_type_is_passed_through(
+            self, dealer: DealerClient):
+        listener = _TestMessageListener()
+        dealer.add_message_listener(listener, ["hm://connect-state/"])
+
+        payload = {"test": True}
+        msg = {
+            "uri": "hm://connect-state/v1/connect/update",
+            "headers": {"Content-Type": "application/json"},
+            "payloads": [payload],
+        }
+        dealer.handle_message(msg)
+        dealer._DealerClient__worker.shutdown(wait=True)
+
+        assert len(listener.messages) == 1
+        assert listener.messages[0][2] == payload
+
+    def test_list_payload_gzip_is_decompressed(self, dealer: DealerClient):
+        listener = _TestMessageListener()
+        dealer.add_message_listener(listener, ["hm://foo/"])
+
+        raw = b"gzipped-payload"
+        msg = {
+            "uri": "hm://foo/bar",
+            "headers": {
+                "Content-Type": "application/octet-stream",
+                "Transfer-Encoding": "gzip",
+            },
+            "payloads": [base64.b64encode(gzip.compress(raw)).decode("ascii")],
+        }
+        dealer.handle_message(msg)
+        dealer._DealerClient__worker.shutdown(wait=True)
+
+        assert len(listener.messages) == 1
+        assert listener.messages[0][2] == raw
+
+    def test_multiple_payload_values_are_dropped(self, dealer: DealerClient):
+        listener = _TestMessageListener()
+        dealer.add_message_listener(listener, ["hm://foo/"])
+
+        msg = {
+            "uri": "hm://foo/bar",
+            "headers": {"Content-Type": "application/octet-stream"},
+            "payloads": ["Zm9v", "YmFy"],
+        }
+        dealer.handle_message(msg)
+        dealer._DealerClient__worker.shutdown(wait=True)
+
+        assert len(listener.messages) == 0
+
+    def test_single_scalar_payload_is_still_supported(
+            self, dealer: DealerClient):
+        listener = _TestMessageListener()
+        dealer.add_message_listener(listener, ["hm://foo/"])
+
+        msg = {
+            "uri": "hm://foo/bar",
+            "headers": {"Content-Type": "application/octet-stream"},
+            "payloads": base64.b64encode(b"legacy").decode("ascii"),
+        }
+        dealer.handle_message(msg)
+        dealer._DealerClient__worker.shutdown(wait=True)
+
+        assert len(listener.messages) == 1
+        assert listener.messages[0][2] == b"legacy"
 
 
 class TestRequestDispatch:
